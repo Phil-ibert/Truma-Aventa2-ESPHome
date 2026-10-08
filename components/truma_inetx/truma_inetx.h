@@ -108,6 +108,8 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void start_pairing();
   /// Forget the address remembered after bonding (falls back to the YAML mac_address).
   void forget_remembered_address();
+  /// Remove the ESP32 bond with the device, forget the remembered address and disconnect.
+  void forget_pairing();
 
   /// Last known value of Topic.Parameter, or nullptr.
   const cbor::Value *get_value(const std::string &topic, const std::string &param) const;
@@ -240,6 +242,7 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   // addresses / bonding
   uint64_t configured_address_{0};
   uint64_t pending_target_{0};
+  bool has_pending_target_{false};
   ESPPreferenceObject address_pref_;
   std::set<uint64_t> seen_addresses_;
   bool pairing_mode_{false};

@@ -89,3 +89,26 @@ text_sensor:
 time:
   - id: !extend truma_time
     timezone: "CET-1CEST,M3.5.0,M10.5.0/3"
+
+# Second climate entity: disabled optional parameters + fan mode mapping
+climate:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Aventa minimal"
+    current_temperature_parameter: false
+    preset_parameter: false
+    action_parameter: false
+    fan_mode_parameter:
+      topic: AirCirculation
+      parameter: FanLevel
+      values:
+        LOW: 2
+        MEDIUM: 5
+        HIGH: 10
+
+button:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    type: refresh
+    name: "Refresh override"
+    icon: mdi:cached

@@ -185,9 +185,9 @@ void TrumaInetX::loop() {
     }
   }
 
-  if (this->pending_target_ != 0 && this->parent()->state() == espbt::ClientState::IDLE) {
+  if (this->has_pending_target_ && this->parent()->state() == espbt::ClientState::IDLE) {
     this->parent()->set_address(this->pending_target_);
-    this->pending_target_ = 0;
+    this->has_pending_target_ = false;
   }
 
   if (!this->rx_buffer_.empty() && (now - this->rx_started_) > RX_REASSEMBLY_TIMEOUT_MS) {
@@ -533,7 +533,8 @@ bool TrumaInetX::parse_device(const espbt::ESPBTDevice &device) {
 }
 
 void TrumaInetX::retarget_(uint64_t address, const char *reason) {
-  if (address == 0 || address == this->parent()->get_address() || address == this->pending_target_)
+  if (address == 0 || address == this->parent()->get_address() ||
+      (this->has_pending_target_ && address == this->pending_target_))
     return;
   char a[18], b[18];
   format_address(address, a);
@@ -541,6 +542,7 @@ void TrumaInetX::retarget_(uint64_t address, const char *reason) {
   ESP_LOGI(TAG, "Switching target address %s -> %s (%s)", b, a, reason);
   // The address may only change while the client is idle: disconnect first if needed.
   this->pending_target_ = address;
+  this->has_pending_target_ = true;
   if (this->parent()->state() != espbt::ClientState::IDLE)
     this->parent()->disconnect();
 }
@@ -579,6 +581,31 @@ void TrumaInetX::store_address_(uint64_t address) {
   char a[18];
   format_address(address, a);
   ESP_LOGI(TAG, "Address %s remembered for the next restarts (you may also set it as mac_address)", a);
+}
+
+void TrumaInetX::forget_pairing() {
+  auto *client = this->parent();
+  if (client->get_address() != 0) {
+    esp_bd_addr_t bda;
+    memcpy(bda, client->get_remote_bda(), sizeof(esp_bd_addr_t));
+    esp_err_t err = esp_ble_remove_bond_device(bda);
+    char a[18];
+    format_address(client->get_address(), a);
+    if (err == ESP_OK) {
+      ESP_LOGI(TAG, "Bond with %s removed", a);
+    } else {
+      ESP_LOGW(TAG, "No bond removed for %s (err %d)", a, err);
+    }
+  }
+  this->forget_remembered_address();
+  if (this->configured_address_ != client->get_address()) {
+    this->pending_target_ = this->configured_address_;
+    this->has_pending_target_ = true;
+    if (client->state() != espbt::ClientState::IDLE)
+      client->disconnect();
+  } else if (client->state() != espbt::ClientState::IDLE) {
+    client->disconnect();
+  }
 }
 
 void TrumaInetX::remember_bond_(const uint8_t *peer) {

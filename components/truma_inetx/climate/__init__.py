@@ -27,6 +27,19 @@ TrumaInetXClimate = truma_inetx_ns.class_(
 
 # iNet X "RoomClimate.Mode": 0=OFF 1=ACC(auto) 2=COOLING 3=HEATING 4=HEATING_AC 5=VENTING 6=DEHUMIDIFYING
 # Best guesses for an Aventa without panel: check the logs while using the original remote.
+# Aventa defaults for the optional parameters (set to `false` to disable one)
+DEFAULT_CURRENT = {CONF_TOPIC: "AirCooling", CONF_PARAMETER: "Temp"}
+DEFAULT_PRESET = {
+    CONF_TOPIC: "AirCooling",
+    CONF_PARAMETER: "Mode",
+    CONF_VALUES: {"COMFORT": 0, "BOOST": 1},
+}
+DEFAULT_ACTION = {
+    CONF_TOPIC: "AirCooling",
+    CONF_PARAMETER: "Active",
+    CONF_VALUES: {"OFF": 0, "COOLING": 1, "IDLE": 2},
+}
+
 DEFAULT_MODE_VALUES = {
     "OFF": 0,
     "AUTO": 1,
@@ -76,6 +89,17 @@ def _parameter_schema(default_topic=None, default_parameter=None):
     return cv.Schema({topic: cv.string_strict, parameter: cv.string_strict})
 
 
+def _disableable(schema):
+    """Accept a mapping, or `false` to disable an optional parameter."""
+
+    def validator(value):
+        if value is False or (isinstance(value, str) and value.lower() in ("false", "none", "off")):
+            return None
+        return schema(value)
+
+    return validator
+
+
 def _validate_off_mode(config):
     if "OFF" not in config[CONF_MODE_PARAMETER][CONF_VALUES]:
         raise cv.Invalid("mode_parameter.values must contain OFF")
@@ -96,15 +120,17 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_TARGET_TEMPERATURE_PARAMETER, default={}
             ): _parameter_schema("RoomClimate", "TgtTemp"),
-            cv.Optional(CONF_CURRENT_TEMPERATURE_PARAMETER): _parameter_schema(),
-            cv.Optional(CONF_FAN_MODE_PARAMETER): _mapping_schema(
-                climate.validate_climate_fan_mode
+            cv.Optional(
+                CONF_CURRENT_TEMPERATURE_PARAMETER, default=DEFAULT_CURRENT
+            ): _disableable(_parameter_schema()),
+            cv.Optional(CONF_FAN_MODE_PARAMETER): _disableable(
+                _mapping_schema(climate.validate_climate_fan_mode)
             ),
-            cv.Optional(CONF_PRESET_PARAMETER): _mapping_schema(
-                climate.validate_climate_preset
+            cv.Optional(CONF_PRESET_PARAMETER, default=DEFAULT_PRESET): _disableable(
+                _mapping_schema(climate.validate_climate_preset)
             ),
-            cv.Optional(CONF_ACTION_PARAMETER): _mapping_schema(
-                climate.validate_climate_action
+            cv.Optional(CONF_ACTION_PARAMETER, default=DEFAULT_ACTION): _disableable(
+                _mapping_schema(climate.validate_climate_action)
             ),
             # wire value x multiplier = degrees C (iNet X uses tenths of a degree)
             cv.Optional(CONF_TEMPERATURE_MULTIPLIER, default=0.1): cv.positive_float,

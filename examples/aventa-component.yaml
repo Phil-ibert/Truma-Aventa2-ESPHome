@@ -1,0 +1,74 @@
+# Utilisation « composant » : uniquement le composant externe, sans le package.
+# Ajoutez ces blocs à la configuration de votre ESP32 (proxy Bluetooth ou non).
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+
+bluetooth_proxy:        # facultatif : l'ESP32 reste proxy Bluetooth
+  active: true
+
+esp32_ble:
+  max_connections: 4    # 3 emplacements pour le proxy + 1 pour l'Aventa
+  # io_capability: keyboard_only   # seulement si l'Aventa exige un code PIN
+
+external_components:
+  - source: github://Phil-ibert/Truma-Aventa2-ESPHome@main
+    components: [truma_inetx]
+    refresh: 1d
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+ble_client:
+  - id: aventa_ble
+    mac_address: "00:00:00:00:00:00"   # trouvée par le bouton « appairer », puis mémorisée
+
+truma_inetx:
+  - id: aventa
+    ble_client_id: aventa_ble
+    time_id: ha_time
+    # pin: 123456          # si l'Aventa demande un code
+    # log_frames: true     # trames décodées dans les logs (mise au point)
+
+climate:
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    name: "Aventa"
+    # Modes, consigne, température, Confort/Boost et action : valeurs par défaut Aventa.
+    # À ajuster si les logs montrent d'autres valeurs avec la télécommande, par exemple :
+    # mode_parameter:
+    #   values: {"OFF": 0, COOL: 2, HEAT: 3, FAN_ONLY: 5, DRY: 6}
+
+number:
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    name: "Aventa ventilation"
+    topic: AirCirculation
+    parameter: FanLevel
+    min_value: 0
+    max_value: 10
+    mode: slider
+
+binary_sensor:
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    name: "Aventa connectée"
+    device_class: connectivity
+    entity_category: diagnostic
+
+button:
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    type: pair
+    name: "Aventa appairer"
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    type: forget_pairing
+    name: "Aventa oublier l'appairage"

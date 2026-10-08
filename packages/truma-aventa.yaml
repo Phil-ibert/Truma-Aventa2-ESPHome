@@ -69,25 +69,9 @@ climate:
         HEAT: 4
         FAN_ONLY: 5
         DRY: 6
-    target_temperature_parameter:
-      topic: RoomClimate
-      parameter: TgtTemp
-    current_temperature_parameter:
-      topic: AirCooling
-      parameter: Temp
-    preset_parameter:
-      topic: AirCooling
-      parameter: Mode
-      values:
-        COMFORT: 0
-        BOOST: 1
-    action_parameter:
-      topic: AirCooling
-      parameter: Active
-      values:
-        "OFF": 0
-        COOLING: 1
-        IDLE: 2
+    # consigne (RoomClimate.TgtTemp), température (AirCooling.Temp), préréglages
+    # Confort/Boost (AirCooling.Mode) et action (AirCooling.Active) : valeurs par défaut
+    # du composant pour l'Aventa
     visual:
       min_temperature: 16
       max_temperature: 30
@@ -141,32 +125,22 @@ switch:
     icon: mdi:bluetooth-connect
 
 button:
-  - platform: template
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    type: pair
     name: "${aventa_name} appairer"
-    entity_category: config
-    icon: mdi:bluetooth-settings
-    on_press:
-      - lambda: id(truma).start_pairing();
-  - platform: template
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    type: forget_pairing
     name: "${aventa_name} oublier l'appairage"
-    entity_category: config
-    icon: mdi:link-variant-off
-    on_press:
-      - ble_client.remove_bond:
-          id: truma_aventa_ble
-      - lambda: id(truma).forget_remembered_address();
-  - platform: template
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    type: refresh
     name: "${aventa_name} relire les paramètres"
-    entity_category: diagnostic
-    icon: mdi:refresh
-    on_press:
-      - lambda: id(truma).refresh();
-  - platform: template
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    type: dump_parameters
     name: "${aventa_name} journaliser les paramètres"
-    entity_category: diagnostic
-    icon: mdi:text-box-search-outline
-    on_press:
-      - lambda: id(truma).dump_parameters();
 
 api:
   actions:
