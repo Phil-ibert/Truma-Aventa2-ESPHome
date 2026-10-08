@@ -4,7 +4,9 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "esphome/components/esp32_ble/ble.h"
 
+#include <esp_bt.h>
 #include <esp_gap_ble_api.h>
 #include <esp_gattc_api.h>
 
@@ -32,6 +34,7 @@ static const size_t MAX_TX_QUEUE = 100;
 static const uint32_t PAIRING_SCAN_MS = 8000;
 static const size_t MAX_LOGGED_ADVERTISERS = 32;
 static const uint32_t ADDRESS_PREF_MAGIC = 0x54524D41;  // "TRMA"
+static const int HCI_ERR_CONN_FAILED_TO_ESTABLISH = 0x3E;
 
 static void format_address(uint64_t address, char *out) {
   snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X", (unsigned) ((address >> 40) & 0xFF),
@@ -138,6 +141,11 @@ void TrumaInetX::dump_config() {
   ESP_LOGCONFIG(TAG, "  Frame logging: %s, advertisement logging: %s", YESNO(this->log_frames_),
                 YESNO(this->log_advertisements_));
   ESP_LOGCONFIG(TAG, "  Remember bonded address: %s", YESNO(this->remember_address_));
+  if (this->has_tx_power_) {
+    ESP_LOGCONFIG(TAG, "  Bluetooth TX power: %d dBm", this->tx_power_dbm_);
+  } else {
+    ESP_LOGCONFIG(TAG, "  Bluetooth TX power: ESP-IDF default");
+  }
   if (this->poll_interval_ > 0) {
     ESP_LOGCONFIG(TAG, "  Poll interval: %u s", (unsigned) (this->poll_interval_ / 1000));
   } else {
@@ -150,6 +158,16 @@ void TrumaInetX::dump_config() {
 
 void TrumaInetX::loop() {
   const uint32_t now = millis();
+
+  // The controller forgets the TX power when Bluetooth is disabled: apply it whenever BLE becomes active.
+  if (this->has_tx_power_ && esp32_ble::global_ble != nullptr) {
+    if (!esp32_ble::global_ble->is_active()) {
+      this->tx_power_applied_ = false;
+    } else if (!this->tx_power_applied_) {
+      this->tx_power_applied_ = true;
+      this->apply_tx_power_();
+    }
+  }
 
   switch (this->state_) {
     case SessionState::SECURING:
@@ -249,9 +267,19 @@ void TrumaInetX::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t g
 
     case ESP_GATTC_OPEN_EVT:
       if (param->open.status == ESP_GATT_OK) {
-        ESP_LOGI(TAG, "Connected to %s", this->parent()->address_str());
+        if (this->connect_failures_ > 0) {
+          ESP_LOGI(TAG, "Connected to %s (RSSI %d dBm) after %u failed attempts in %u s", this->parent()->address_str(),
+                   this->last_rssi_, (unsigned) this->connect_failures_,
+                   (unsigned) ((millis() - this->first_failure_at_) / 1000));
+        } else {
+          ESP_LOGI(TAG, "Connected to %s (RSSI %d dBm)", this->parent()->address_str(), this->last_rssi_);
+        }
+        this->connect_failures_ = 0;
+        this->last_link_error_ = -1;
         this->reset_session_();
         this->set_state_(SessionState::CONNECTING);
+      } else if (param->open.status != ESP_GATT_ALREADY_OPEN) {
+        this->on_connection_failed_(param->open.status);
       }
       break;
 
@@ -309,6 +337,8 @@ void TrumaInetX::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t g
 
     case ESP_GATTC_DISCONNECT_EVT:
     case ESP_GATTC_CLOSE_EVT:
+      if (event == ESP_GATTC_DISCONNECT_EVT && this->state_ == SessionState::DISCONNECTED)
+        this->last_link_error_ = param->disconnect.reason;  // a connection attempt that did not succeed
       if (this->state_ != SessionState::DISCONNECTED) {
         ESP_LOGW(TAG, "Disconnected from %s", this->parent()->address_str());
         this->reset_session_();
@@ -530,6 +560,8 @@ bool TrumaInetX::parse_device(const espbt::ESPBTDevice &device) {
     return false;
   const uint64_t address = device.address_uint64();
   const int rssi = device.get_rssi();
+  if (address == this->parent()->get_address())
+    this->last_rssi_ = rssi;
 
   if (this->pairing_mode_ && (this->pairing_candidate_ == 0 || rssi > this->pairing_rssi_)) {
     this->pairing_candidate_ = address;
@@ -560,6 +592,45 @@ bool TrumaInetX::parse_device(const espbt::ESPBTDevice &device) {
       ESP_LOGI(TAG, "  -> this is the configured device");
   }
   return false;  // never consume: the BLE client and other listeners need it too
+}
+
+void TrumaInetX::apply_tx_power_() {
+  // DEFAULT covers every power type that was never set (connections, scanning, connection
+  // requests); SCAN is set explicitly too in case something set it before.
+  const auto level = static_cast<esp_power_level_t>(this->tx_power_level_);
+  esp_err_t err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, level);
+  if (err == ESP_OK)
+    err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, level);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "Could not set the Bluetooth TX power to %d dBm: %s", this->tx_power_dbm_, esp_err_to_name(err));
+    return;
+  }
+  ESP_LOGI(TAG, "Bluetooth TX power set to %d dBm", this->tx_power_dbm_);
+}
+
+void TrumaInetX::on_connection_failed_(int status) {
+  const uint32_t now = millis();
+  if (this->connect_failures_ == 0)
+    this->first_failure_at_ = now;
+  this->connect_failures_++;
+  const int reason = this->last_link_error_;
+  this->last_link_error_ = -1;
+  // Warn on the 3rd consecutive failure, then every 20 failures (ESPHome retries by itself).
+  if (this->connect_failures_ != 3 && this->connect_failures_ % 20 != 0)
+    return;
+  const unsigned seconds = (now - this->first_failure_at_) / 1000;
+  if (reason == HCI_ERR_CONN_FAILED_TO_ESTABLISH) {
+    ESP_LOGW(TAG,
+             "%u connection attempts to %s failed in %u s (RSSI %d dBm): the device did not answer the "
+             "connection request (HCI 0x3E). This is a radio problem (distance, obstacles, Wi-Fi sharing the "
+             "ESP32 radio), not a pairing problem: the ESP32 keeps retrying. If this happens often, bring the "
+             "ESP32 closer to the unit.",
+             (unsigned) this->connect_failures_, this->parent()->address_str(), seconds, this->last_rssi_);
+  } else {
+    ESP_LOGW(TAG, "%u connection attempts to %s failed in %u s (RSSI %d dBm, GATT status %d, HCI reason 0x%02X)",
+             (unsigned) this->connect_failures_, this->parent()->address_str(), seconds, this->last_rssi_, status,
+             reason < 0 ? 0 : reason);
+  }
 }
 
 void TrumaInetX::retarget_(uint64_t address, const char *reason) {

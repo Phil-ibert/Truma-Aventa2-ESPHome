@@ -44,6 +44,7 @@ truma_inetx:
   - id: !extend truma
     device_name: "Aventa"
     poll_interval: 30s
+    tx_power: 6dBm
     discovery_addresses: [0x0101, 0x0202]
     destinations:
       RoomClimate: 0x0202
@@ -135,6 +136,26 @@ climate:
       topic: AirCooling
       parameter: Mode
       values: {COMFORT: 0, BOOST: 3}
+
+# Second light: on/off only, custom values
+light:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Light on-off only"
+    active_parameter:
+      topic: AmbientLight
+      parameter: Active
+      on_value: 2
+      off_value: 0
+    brightness_parameter: false
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Light custom range"
+    restore_mode: ALWAYS_OFF
+    brightness_parameter:
+      parameter: LightStep
+      min_value: 25
+      max_value: 100
 
 button:
   - platform: truma_inetx

@@ -64,6 +64,13 @@ climate:
     #   auto -> RoomClimate.TgtTemp, ventilation -> AirCirculation.FanLevel
     # - vitesses : Auto, Low, Medium, High, Quiet (= Nuit)
 
+light:
+  # éclairage de la clim (AmbientLight) : marche/arrêt + luminosité, synchronisé avec la télécommande
+  - platform: truma_inetx
+    id: truma_light
+    truma_inetx_id: truma
+    name: "${aventa_name} éclairage"
+
 sensor:
   - platform: truma_inetx
     truma_inetx_id: truma

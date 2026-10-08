@@ -11,7 +11,7 @@ import esphome.codegen as cg
 from esphome.components import ble_client, esp32_ble_tracker
 from esphome.components import time as time_
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_TIME_ID, SCHEDULER_DONT_RUN
+from esphome.const import CONF_ID, CONF_TIME_ID, CONF_TX_POWER, SCHEDULER_DONT_RUN
 from esphome.core import CORE
 
 DEPENDENCIES = ["ble_client", "esp32_ble_tracker"]
@@ -89,6 +89,39 @@ DEFAULT_TOPICS = [
 # are queried automatically, so this list only speeds up the first connection.
 DEFAULT_DISCOVERY_ADDRESSES = [0x0101, 0x0801]
 
+esp_power_level_t = cg.global_ns.enum("esp_power_level_t")
+TX_POWER_LEVELS = {
+    -12: esp_power_level_t.ESP_PWR_LVL_N12,
+    -9: esp_power_level_t.ESP_PWR_LVL_N9,
+    -6: esp_power_level_t.ESP_PWR_LVL_N6,
+    -3: esp_power_level_t.ESP_PWR_LVL_N3,
+    0: esp_power_level_t.ESP_PWR_LVL_N0,
+    3: esp_power_level_t.ESP_PWR_LVL_P3,
+    6: esp_power_level_t.ESP_PWR_LVL_P6,
+    9: esp_power_level_t.ESP_PWR_LVL_P9,
+}
+
+
+def validate_tx_power(value):
+    """Bluetooth TX power in dBm (-12..9, steps of 3), or "default" to keep ESP-IDF's (+3 dBm)."""
+    if value is False or (
+        isinstance(value, str) and value.strip().lower() in ("default", "none", "false")
+    ):
+        return None
+    if isinstance(value, str):
+        value = value.strip().lower()
+        for suffix in ("dbm", "db"):
+            if value.endswith(suffix):
+                value = value[: -len(suffix)].strip()
+                break
+    value = cv.int_(value)
+    if value not in TX_POWER_LEVELS:
+        raise cv.Invalid(
+            f"tx_power must be one of {', '.join(str(v) for v in sorted(TX_POWER_LEVELS))} dBm"
+        )
+    return value
+
+
 # Stable namespace so that the generated identity never changes for a given device name.
 IDENTITY_NAMESPACE = uuid.UUID("6f0b6c3e-2d1a-4b8e-9c55-7d3f0e2a9b41")
 
@@ -145,6 +178,9 @@ CONFIG_SCHEMA = (
             # Re-read every parameter periodically, in case the device does not push changes
             # made with its remote ("never" to disable).
             cv.Optional(CONF_POLL_INTERVAL, default="60s"): cv.update_interval,
+            # The ESP32 transmits at +3 dBm by default: a roof unit may not hear its connection
+            # requests (HCI error 0x3E). 9 dBm is the maximum; applies to the whole ESP32 BLE radio.
+            cv.Optional(CONF_TX_POWER, default=9): validate_tx_power,
         }
     )
     .extend(ble_client.BLE_CLIENT_SCHEMA)
@@ -209,3 +245,5 @@ async def to_code(config):
     cg.add(var.set_poll_interval(0 if poll_ms >= SCHEDULER_DONT_RUN else poll_ms))
     if CONF_DEVICE_NAME in config:
         cg.add(var.set_device_name(config[CONF_DEVICE_NAME]))
+    if (tx_power := config.get(CONF_TX_POWER)) is not None:
+        cg.add(var.set_tx_power(TX_POWER_LEVELS[tx_power], tx_power))

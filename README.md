@@ -31,6 +31,7 @@ clim en Bluetooth Low Energy et parle le même protocole que l'app **Truma iNet 
 | Entité Home Assistant | Rôle |
 |---|---|
 | `climate` **Aventa** | marche/arrêt, mode (froid, chauffage, ventilation, déshumidification, auto), consigne, température, vitesse de ventilation (Auto, Low, Medium, High, Quiet/Nuit), action en cours. Consigne et ventilation suivent la télécommande |
+| `light` éclairage | marche/arrêt et luminosité de l'éclairage de la clim, synchronisés avec la télécommande |
 | `sensor` température intérieure | température mesurée par la clim |
 | `binary_sensor` connectée | session iNet X opérationnelle |
 | `text_sensor` état Bluetooth | `disconnected`, `connecting`, `securing`, `registering`, `ready`… |
@@ -84,6 +85,11 @@ climate:
   - platform: truma_inetx
     truma_inetx_id: aventa
     name: "Aventa"         # modes, consigne, ventilation, température : valeurs Aventa par défaut
+
+light:
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    name: "Aventa éclairage"
 
 button:
   - platform: truma_inetx
@@ -279,12 +285,13 @@ La procédure de capture avec un sniffer nRF et Wireshark est dans
 | `log_advertisements` | `true` | journalise les appareils Truma entendus |
 | `log_frames` | `false` | journalise chaque trame décodée |
 | `frame_delay` | `100ms` | délai minimal entre deux messages |
+| `tx_power` | `9` | puissance d'émission Bluetooth de l'ESP32 en dBm : -12, -9, -6, -3, 0, 3, 6 ou 9 (maximum). ESP-IDF émet à +3 dBm par défaut, ce qui peut être juste pour une clim sur le toit. S'applique à toute la radio Bluetooth de l'ESP32 (proxy compris). `default` pour ne pas y toucher |
 | `poll_interval` | `60s` | relit périodiquement tous les paramètres (filet de sécurité si la clim ne signale pas d'elle-même un changement fait à la télécommande). `never` pour désactiver |
 
 ### Plateformes d'entités
 
-Toutes acceptent `truma_inetx_id` et les options standard d'ESPHome. Sauf `climate` et `button`,
-elles prennent aussi `topic` et `parameter`.
+Toutes acceptent `truma_inetx_id` et les options standard d'ESPHome. Sauf `climate`, `light` et
+`button`, elles prennent aussi `topic` et `parameter`.
 
 - `climate` : sans autre option, utilise les valeurs Aventa par défaut :
 
@@ -318,6 +325,17 @@ elles prennent aussi `topic` et `parameter`.
   masque ces noms personnalisés. La valeur `false` désactive un paramètre optionnel
   (`fan_mode_parameter: false` retire la ventilation de l'entité). `action_parameter` accepte une
   source ou une liste : la première qui indique une action en cours l'emporte.
+- `light` : sans autre option, pilote l'éclairage de l'Aventa :
+
+  | Option | Défaut |
+  |---|---|
+  | `active_parameter` | `AmbientLight.Active` avec `on_value` 1 et `off_value` 0 |
+  | `brightness_parameter` | `AmbientLight.LightStep`, `max_value` 100 (= 100 %), `min_value` 1. `false` pour une lumière marche/arrêt sans luminosité |
+
+  La luminosité est appliquée directement (`gamma_correct: 1`, pas de transition par défaut).
+  Si la clim n'accepte que certains niveaux, elle renvoie le niveau retenu et Home Assistant
+  l'affiche. Un allumage à la télécommande (`Active` puis `LightStep`) est repris tel quel, sans
+  renvoyer l'ancienne luminosité de Home Assistant à la clim.
 - `button` : `type` parmi `pair` (premier appairage), `forget_pairing` (supprime le bond et
   l'adresse mémorisée), `refresh` (relit tous les paramètres), `dump_parameters` (les journalise).
 - `sensor` / `number` : `multiplier`. `number` prend aussi `min_value`, `max_value` et `step`.
@@ -336,6 +354,7 @@ elles prennent aussi `topic` et `parameter`.
 | `Truma iNet X characteristics not found` | Le composant cherche `FC314001`–`FC314003` dans tous les services. Si ce message apparaît, la disposition GATT (imprimée juste en dessous) est inattendue : ouvrez une issue avec ce log. |
 | `No registration response` | Protocole différent sur l'Aventa : activez `log_frames` et faites une capture (voir [docs/capture-ble.md](docs/capture-ble.md)). |
 | Un mode ne s'applique pas | Étalonnez les valeurs avec la télécommande (voir plus haut). |
+| Reconnexion lente : `Connection open error, status=133` avec `reason 0x3e`, puis `N connection attempts ... failed` | La clim n'a pas répondu à la demande de connexion. C'est un problème radio, pas un problème d'appairage : l'ESP32 réessaie tout seul et finit par se connecter (`Connected ... after N failed attempts`). Comparez le RSSI affiché à celui de l'appairage. Rapprochez l'ESP32 de la clim ou dégagez son antenne, et gardez `tx_power: 9`. Un Wi-Fi faible occupe aussi davantage la radio que l'ESP32 partage avec le Bluetooth. |
 
 ## Développement
 

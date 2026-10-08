@@ -36,6 +36,7 @@ truma_inetx:
     time_id: ha_time
     # pin: 123456          # si l'Aventa demande un code
     # log_frames: true     # trames décodées dans les logs (mise au point)
+    # tx_power: 9          # puissance d'émission Bluetooth de l'ESP32 en dBm (9 = maximum, défaut)
 
 climate:
   - platform: truma_inetx
@@ -43,6 +44,12 @@ climate:
     name: "Aventa"
     # Modes, consigne et vitesse de ventilation du mode actif, température et action :
     # valeurs par défaut relevées sur une Aventa 2 (synchronisées avec la télécommande).
+
+light:
+  - platform: truma_inetx
+    truma_inetx_id: aventa
+    name: "Aventa éclairage"
+    # AmbientLight.Active (marche/arrêt) + AmbientLight.LightStep (luminosité 0-100)
 
 binary_sensor:
   - platform: truma_inetx

@@ -88,6 +88,12 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void set_device_name(const std::string &name) { this->device_name_ = name; }
   void set_remember_address(bool remember) { this->remember_address_ = remember; }
   void set_log_advertisements(bool log) { this->log_advertisements_ = log; }
+  /// Bluetooth transmit power of the ESP32 (scan/connection requests and links), in dBm.
+  void set_tx_power(int level, int dbm) {  // level: esp_power_level_t
+    this->tx_power_level_ = level;
+    this->tx_power_dbm_ = dbm;
+    this->has_tx_power_ = true;
+  }
 #ifdef USE_TIME
   void set_time(time::RealTimeClock *time) { this->time_ = time; }
 #endif
@@ -188,6 +194,8 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void retarget_(uint64_t address, const char *reason);
   void remember_bond_(const uint8_t *peer);
   void store_address_(uint64_t address);
+  void apply_tx_power_();
+  void on_connection_failed_(int status);
 
   // configuration
   std::string user_name_{"ESPHome"};
@@ -209,6 +217,9 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   std::string device_name_;
   bool remember_address_{true};
   bool log_advertisements_{true};
+  bool has_tx_power_{false};
+  int tx_power_level_{0};
+  int tx_power_dbm_{0};
 #ifdef USE_TIME
   time::RealTimeClock *time_{nullptr};
 #endif
@@ -255,6 +266,13 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   uint32_t pairing_deadline_{0};
   uint64_t pairing_candidate_{0};
   int pairing_rssi_{-127};
+
+  // connection diagnostics
+  bool tx_power_applied_{false};
+  int last_rssi_{0};               // 0 = not heard yet
+  int last_link_error_{-1};        // HCI reason of the last failed connection attempt
+  uint32_t connect_failures_{0};   // consecutive failed connection attempts
+  uint32_t first_failure_at_{0};
 };
 
 }  // namespace truma_inetx
