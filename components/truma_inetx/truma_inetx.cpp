@@ -36,15 +36,19 @@ static const uint32_t PAIRING_SCAN_MS = 8000;
 static const size_t MAX_LOGGED_ADVERTISERS = 32;
 static const uint32_t ADDRESS_PREF_MAGIC = 0x54524D41;  // "TRMA"
 static const int HCI_ERR_CONN_FAILED_TO_ESTABLISH = 0x3E;
-static const size_t HEAP_RESERVE = 16384;  // left free for Wi-Fi, Bluetooth and the API when decoding
+static const size_t HEAP_RESERVE = 4096;     // left free for Wi-Fi, Bluetooth and the API when decoding
+static const size_t SMALL_MESSAGE_HEAP = 1024;  // usual messages: always decoded
+static const uint32_t RECENT_WRITE_MS = 5000;   // poll answers older than our write are ignored meanwhile
 
 /// Memory a received message may use once decoded: an allocation failure would abort the firmware.
+/// Usual messages (a few values) need a few hundred bytes and are always accepted; only unusually
+/// large ones are refused when memory is short.
 static cbor::DecodeLimits decode_limits() {
   const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
   cbor::DecodeLimits limits;
-  limits.max_heap = free_heap > HEAP_RESERVE ? free_heap - HEAP_RESERVE : 0;
-  limits.max_block = largest / 4 * 3;
+  limits.max_heap = std::max(SMALL_MESSAGE_HEAP, free_heap > HEAP_RESERVE ? free_heap - HEAP_RESERVE : 0);
+  limits.max_block = std::max(SMALL_MESSAGE_HEAP, largest / 2);
   return limits;
 }
 
@@ -263,6 +267,7 @@ void TrumaInetX::reset_session_() {
   this->init_queued_ = false;
   this->learned_destinations_.clear();
   this->probed_addresses_.clear();
+  this->recent_writes_.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,6 +1232,19 @@ void TrumaInetX::update_param_(uint16_t source, const std::string &topic, const 
   }
 
   const std::string key = topic + "." + param;
+  if (from_device && strcmp(via, "poll") == 0) {
+    // A poll answer can be older than a write we just sent: keep our value, the device pushes
+    // the change itself.
+    auto written = this->recent_writes_.find(key);
+    if (written != this->recent_writes_.end()) {
+      if (millis() - written->second < RECENT_WRITE_MS) {
+        ESP_LOGD(TAG, "%s = %s from a poll ignored: written %u ms ago", key.c_str(), value.to_string(32).c_str(),
+                 (unsigned) (millis() - written->second));
+        return;
+      }
+      this->recent_writes_.erase(written);
+    }
+  }
   auto it = this->params_.find(key);
   if (it == this->params_.end()) {
     ESP_LOGI(TAG, "New parameter %s = %s (from 0x%04X)", key.c_str(), value.to_string(64).c_str(), source);
@@ -1235,7 +1253,10 @@ void TrumaInetX::update_param_(uint16_t source, const std::string &topic, const 
     std::string old_str = it->second.value.to_string(64);
     std::string new_str = value.to_string(64);
     if (old_str != new_str) {
-      if (from_device) {
+      if (from_device && it->second.source != source && it->second.source != this->assigned_addr_) {
+        // same topic on several devices (e.g. Identify): not a real change
+        ESP_LOGD(TAG, "%s: %s -> %s (from 0x%04X, %s)", key.c_str(), old_str.c_str(), new_str.c_str(), source, via);
+      } else if (from_device) {
         ESP_LOGI(TAG, "%s: %s -> %s (from 0x%04X, %s)", key.c_str(), old_str.c_str(), new_str.c_str(), source, via);
       } else {
         ESP_LOGD(TAG, "%s: %s -> %s (sent)", key.c_str(), old_str.c_str(), new_str.c_str());
@@ -1277,6 +1298,15 @@ bool TrumaInetX::write(const std::string &topic, const std::string &param, const
   uint16_t dest = destination != 0 ? destination : this->resolve_destination_(topic);
   ESP_LOGI(TAG, "Write %s.%s = %s -> 0x%04X", topic.c_str(), param.c_str(), value.to_string(64).c_str(), dest);
   this->queue_frame_(build_write(this->assigned_addr_, dest, topic, param, value));
+  const uint32_t now = millis();
+  for (auto it = this->recent_writes_.begin(); it != this->recent_writes_.end();) {
+    if (now - it->second >= RECENT_WRITE_MS) {
+      it = this->recent_writes_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  this->recent_writes_[topic + "." + param] = now;
   if (this->optimistic_)
     this->update_param_(this->assigned_addr_, topic, param, value, false);
   return true;

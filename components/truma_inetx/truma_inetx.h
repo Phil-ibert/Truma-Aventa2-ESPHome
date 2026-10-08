@@ -250,6 +250,7 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   bool init_queued_{false};
   std::map<std::string, ParamEntry> params_;
   std::map<std::string, uint16_t> learned_destinations_;
+  std::map<std::string, uint32_t> recent_writes_;  // Topic.Parameter -> millis() of our last write
   std::set<uint16_t> probed_addresses_;
   std::vector<Listener> listeners_;
   CallbackManager<void(SessionState)> state_callbacks_;

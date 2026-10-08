@@ -283,7 +283,7 @@ La procédure de capture avec un sniffer nRF et Wireshark est dans
 | `remember_address` | `true` | mémorise l'adresse stable après appairage (voir RPA) |
 | `device_name` | — | suit la clim par son nom publié si elle change d'adresse sans bonding |
 | `log_advertisements` | `true` | journalise les appareils Truma entendus |
-| `log_frames` | `false` | journalise chaque trame décodée |
+| `log_frames` | `false` | journalise chaque trame décodée. Pour la mise au point seulement : chaque message est décodé deux fois et produit de longues lignes de log, ce qui consomme de la mémoire |
 | `frame_delay` | `100ms` | délai minimal entre deux messages |
 | `tx_power` | non modifiée (+3 dBm, valeur d'ESP-IDF) | puissance d'émission Bluetooth de l'ESP32 en dBm : -12, -9, -6, -3, 0, 3, 6 ou 9 (maximum). À augmenter si la clim ne répond pas aux demandes de connexion (`reason 0x3e`). S'applique à toute la radio Bluetooth de l'ESP32 (proxy compris) |
 | `poll_interval` | `60s` | relit périodiquement tous les paramètres (filet de sécurité si la clim ne signale pas d'elle-même un changement fait à la télécommande). `never` pour désactiver |
@@ -354,7 +354,7 @@ Toutes acceptent `truma_inetx_id` et les options standard d'ESPHome. Sauf `clima
 | `Truma iNet X characteristics not found` | Le composant cherche `FC314001`–`FC314003` dans tous les services. Si ce message apparaît, la disposition GATT (imprimée juste en dessous) est inattendue : ouvrez une issue avec ce log. |
 | `No registration response` | Protocole différent sur l'Aventa : activez `log_frames` et faites une capture (voir [docs/capture-ble.md](docs/capture-ble.md)). |
 | Un mode ne s'applique pas | Étalonnez les valeurs avec la télécommande (voir plus haut). |
-| `Message from 0x.... ignored: decoding it needs about N bytes of memory` | Un message reçu demanderait plus de mémoire que l'ESP32 n'en a de libre : il est ignoré plutôt que de faire planter le firmware. Si cela se répète, envoyez ce log (et, si possible, la même séquence avec `log_frames: true`). |
+| `Message from 0x.... ignored: decoding it needs about N bytes of memory` | Un message inhabituellement gros demanderait plus de mémoire que l'ESP32 n'en a de libre : il est ignoré plutôt que de faire planter le firmware (les messages courants, de quelques centaines d'octets, passent toujours). L'ESP32 manque de mémoire : désactivez `log_frames`, et surveillez la mémoire libre avec le composant [`debug`](https://esphome.io/components/debug/) d'ESPHome. |
 | Reconnexion lente : `Connection open error, status=133` avec `reason 0x3e`, puis `N connection attempts ... failed` | La clim n'a pas répondu à la demande de connexion. C'est un problème radio, pas un problème d'appairage : l'ESP32 réessaie tout seul et finit par se connecter (`Connected ... after N failed attempts`). Comparez le RSSI affiché à celui de l'appairage. Rapprochez l'ESP32 de la clim ou dégagez son antenne, ou augmentez `tx_power` (6, voire 9). Un Wi-Fi faible occupe aussi davantage la radio que l'ESP32 partage avec le Bluetooth. |
 
 ## Développement
