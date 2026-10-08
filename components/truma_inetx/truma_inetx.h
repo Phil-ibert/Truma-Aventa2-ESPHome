@@ -194,6 +194,10 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void remember_bond_(const uint8_t *peer);
   void store_address_(uint64_t address);
   void apply_tx_power_();
+  /// Set the unit's clock (SystemTime) from the time source, if any.
+  void send_clock_();
+  /// Compare the clock shown by the unit (TimeAndDate.Time) with the local time after setting it.
+  void check_clock_(const cbor::Value &value);
   void on_connection_failed_(int status);
 
   // configuration
@@ -272,6 +276,12 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   int last_link_error_{-1};        // HCI reason of the last failed connection attempt
   uint32_t connect_failures_{0};   // consecutive failed connection attempts
   uint32_t first_failure_at_{0};
+
+  // unit clock
+  bool clock_sent_{false};
+  uint32_t clock_sent_at_{0};
+  bool clock_check_pending_{false};
+  uint8_t clock_mismatches_{0};
 };
 
 }  // namespace truma_inetx

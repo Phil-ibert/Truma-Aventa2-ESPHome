@@ -136,3 +136,9 @@ Les adresses `0x0201` / `0x0202` (panneau + Combi) ne répondent pas. L'ESP32 re
 **Écritures** : `RoomClimate.TgtTemp` est acceptée mais n'agit pas sur la consigne en froid ou en
 chauffage. Il faut écrire le paramètre du mode actif sur `0x0801`, comme la télécommande.
 `AirCirculation.FanLevel` refuse les valeurs hors de 0 à 3.
+
+**Horloge** : l'interface `0x0101` affiche son horloge dans `TimeAndDate.Time` (`"HH:MM"`) et
+`TimeAndDate.Date` (`"JJ.MM.AA"`), en lecture seule (`perm: 0`). Sans mise à l'heure, elle compte
+depuis la mise sous tension (`10.03.00` observé). Le composant envoie `SystemTime.Time` (secondes
+depuis 1970, en heure locale) et `SystemTime.Lot` = 0, comme l'app officielle, puis vérifie
+`TimeAndDate.Time` à la relecture suivante.

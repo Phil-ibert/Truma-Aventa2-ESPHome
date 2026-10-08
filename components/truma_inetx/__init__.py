@@ -208,8 +208,12 @@ async def to_code(config):
     await ble_client.register_ble_node(var, config)
     await esp32_ble_tracker.register_ble_device(var, config)
 
-    if CONF_TIME_ID in config:
-        clock = await cg.get_variable(config[CONF_TIME_ID])
+    # Clock of the unit: the time_id given, otherwise the first time source of the configuration.
+    time_id = config.get(CONF_TIME_ID)
+    if time_id is None and (clocks := CORE.config.get("time")):
+        time_id = clocks[0][CONF_ID]
+    if time_id is not None:
+        clock = await cg.get_variable(time_id)
         cg.add(var.set_time(clock))
 
     if config.get(CONF_PIN) is not None:

@@ -270,7 +270,7 @@ La procédure de capture avec un sniffer nRF et Wireshark est dans
 | Option | Défaut | Description |
 |---|---|---|
 | `ble_client_id` | — | le `ble_client` de l'Aventa |
-| `time_id` | — | horloge à envoyer à la clim (`SystemTime`), facultative |
+| `time_id` | la première source d'heure de la configuration (`sntp`, `homeassistant`…) | heure utilisée pour mettre la clim à l'heure, au début de chaque session puis chaque jour. Le log confirme `The unit's clock is set`. L'horloge de la clim sert à ses minuteries intégrées |
 | `pin` | aucun | code à 6 chiffres envoyé si la clim en demande un (avec `esp32_ble: io_capability: keyboard_only`) |
 | `encryption` | `true` | lance l'appairage/chiffrement à la connexion |
 | `user_name` | `ESPHome` | nom présenté à la clim (comme un téléphone) |

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace esphome {
@@ -28,6 +29,9 @@ static const uint32_t GATT_WRITE_TIMEOUT_MS = 5000;
 static const uint32_t RX_REASSEMBLY_TIMEOUT_MS = 2000;
 static const uint32_t SUBSCRIBE_BATCH_DELAY_MS = 250;
 static const uint32_t IDENTITY_DELAY_MS = 300;
+static const uint32_t CLOCK_CHECK_INTERVAL_MS = 60000;
+static const uint32_t CLOCK_RESYNC_MS = 24UL * 3600UL * 1000UL;  // the unit's clock drifts: resend daily
+static const uint32_t CLOCK_READ_DELAY_MS = 10000;  // ignore clock readings older than our write
 static const uint32_t DISCOVERY_DELAY_MS = 1000;
 static const size_t MAX_TOPICS_PER_SUBSCRIBE = 10;
 static const size_t MAX_FRAME_SIZE = 4096;
@@ -126,6 +130,18 @@ void TrumaInetX::setup() {
   this->reset_session_();
   if (this->poll_interval_ > 0)
     this->set_interval("poll", this->poll_interval_, [this]() { this->poll_(); });
+#ifdef USE_TIME
+  if (this->time_ != nullptr) {
+    // Set the unit's clock once the time is known (the session may start before), then daily.
+    this->set_interval("clock", CLOCK_CHECK_INTERVAL_MS, [this]() {
+      if (this->state_ == SessionState::READY &&
+          (!this->clock_sent_ || millis() - this->clock_sent_at_ > CLOCK_RESYNC_MS))
+        this->send_clock_();
+    });
+    // The unit shows its clock in TimeAndDate.Time ("HH:MM"): check that setting it worked.
+    this->register_listener("TimeAndDate", "Time", [this](const cbor::Value &value) { this->check_clock_(value); });
+  }
+#endif
   this->configured_address_ = this->parent()->get_address();
   this->address_pref_ = global_preferences->make_preference<StoredAddress>(fnv1_hash("truma_inetx_address"), true);
   if (!this->remember_address_)
@@ -169,6 +185,11 @@ void TrumaInetX::dump_config() {
   }
   if (!this->device_name_.empty())
     ESP_LOGCONFIG(TAG, "  Follow device name: '%s'", this->device_name_.c_str());
+#ifdef USE_TIME
+  ESP_LOGCONFIG(TAG, "  Set the unit's clock: %s", YESNO(this->time_ != nullptr));
+#else
+  ESP_LOGCONFIG(TAG, "  Set the unit's clock: no (no time source)");
+#endif
   ESP_LOGCONFIG(TAG, "  Session state: %s", session_state_to_string(this->state_));
 }
 
@@ -268,6 +289,9 @@ void TrumaInetX::reset_session_() {
   this->learned_destinations_.clear();
   this->probed_addresses_.clear();
   this->recent_writes_.clear();
+  this->clock_sent_ = false;
+  this->clock_check_pending_ = false;
+  this->clock_mismatches_ = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +709,55 @@ void TrumaInetX::on_connection_failed_(int status) {
   }
 }
 
+void TrumaInetX::send_clock_() {
+#ifdef USE_TIME
+  if (this->time_ == nullptr)
+    return;
+  auto now = this->time_->now();
+  if (!now.is_valid())
+    return;  // retried every minute until the time source is synchronized
+  // Local time, with a zero offset (Lot) like the official app: the unit displays it as is.
+  const int64_t local = static_cast<int64_t>(now.timestamp) + ESPTime::timezone_offset();
+  const uint16_t dest = this->resolve_destination_("SystemTime");
+  this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Time", cbor::Value::make_int(local)),
+                     IDENTITY_DELAY_MS);
+  this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Lot", cbor::Value::make_int(0)),
+                     IDENTITY_DELAY_MS);
+  this->clock_sent_ = true;
+  this->clock_sent_at_ = millis();
+  this->clock_check_pending_ = true;
+  this->clock_mismatches_ = 0;
+  ESP_LOGI(TAG, "Setting the unit's clock: %02u.%02u.%04u %02u:%02u", now.day_of_month, now.month, now.year,
+           now.hour, now.minute);
+#endif
+}
+
+void TrumaInetX::check_clock_(const cbor::Value &value) {
+#ifdef USE_TIME
+  if (!this->clock_check_pending_ || !value.is_text() || millis() - this->clock_sent_at_ < CLOCK_READ_DELAY_MS)
+    return;
+  auto now = this->time_->now();
+  int hour, minute;
+  if (!now.is_valid() || sscanf(value.str.c_str(), "%d:%d", &hour, &minute) != 2)
+    return;
+  int diff = (hour * 60 + minute) - (now.hour * 60 + now.minute);
+  diff = ((diff % 1440) + 1440) % 1440;
+  if (diff > 720)
+    diff -= 1440;
+  if (std::abs(diff) <= 2) {
+    this->clock_check_pending_ = false;
+    ESP_LOGI(TAG, "The unit's clock is set: %s (local time %02u:%02u)", value.str.c_str(), now.hour, now.minute);
+    return;
+  }
+  // A reading may still predate our write: conclude on the second one.
+  if (++this->clock_mismatches_ < 2)
+    return;
+  this->clock_check_pending_ = false;
+  ESP_LOGW(TAG, "The unit's clock shows %s instead of %02u:%02u (%+d min): setting it did not work, please report",
+           value.str.c_str(), now.hour, now.minute, diff);
+#endif
+}
+
 void TrumaInetX::retarget_(uint64_t address, const char *reason) {
   if (address == 0 || address == this->parent()->get_address() ||
       (this->has_pending_target_ && address == this->pending_target_))
@@ -1031,18 +1104,7 @@ void TrumaInetX::continue_initialisation_() {
   // 2. identity (the device remembers clients by Muid/Uuid)
   if (this->send_identity_) {
     uint16_t dest = this->resolve_destination_("MobileIdentity");
-#ifdef USE_TIME
-    if (this->time_ != nullptr) {
-      auto now = this->time_->now();
-      if (now.is_valid()) {
-        this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Time",
-                                       cbor::Value::make_int(static_cast<int64_t>(now.timestamp))),
-                           IDENTITY_DELAY_MS);
-        this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Lot", cbor::Value::make_int(0)),
-                           IDENTITY_DELAY_MS);
-      }
-    }
-#endif
+    this->send_clock_();
     this->queue_frame_(build_write(this->assigned_addr_, dest, "MobileIdentity", "UserName",
                                    cbor::Value::make_text(this->user_name_)),
                        IDENTITY_DELAY_MS);
