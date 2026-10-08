@@ -1,0 +1,4 @@
+# Normalise line endings (the repo is edited on Windows, built on Linux CI)
+* text=auto eol=lf
+*.png binary
+*.pcapng binary

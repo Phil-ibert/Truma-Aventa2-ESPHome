@@ -1,0 +1,180 @@
+# =============================================================================
+# Truma Aventa 2e génération -> Home Assistant, via Bluetooth (ESPHome)
+#
+# Package à importer depuis GitHub sur un ESP32 existant (y compris un ESP32
+# qui fait déjà proxy Bluetooth). Voir README.md pour l'installation.
+#
+# Variables (toutes optionnelles sauf aventa_mac) :
+#   aventa_mac        adresse Bluetooth de la clim (voir les logs "Truma device heard")
+#   aventa_pin        code PIN à 6 chiffres si l'Aventa en demande un ("" = aucun)
+#   aventa_name       nom de la clim dans Home Assistant
+#   truma_source      source du composant (github://Phil-ibert/Truma-Aventa2-ESPHome@main)
+#   log_frames        "true" pour journaliser toutes les trames (mise au point)
+#   max_connections   connexions BLE simultanées de l'ESP32 (proxy + Aventa)
+#   ble_io_capability "none" (Just Works, défaut ESPHome) ou "keyboard_only" si
+#                     l'Aventa exige un code PIN (s'applique à tout l'ESP32)
+# =============================================================================
+
+defaults:
+  aventa_mac: "00:00:00:00:00:00"
+  aventa_pin: ""
+  aventa_name: "Aventa"
+  truma_source: "github://Phil-ibert/Truma-Aventa2-ESPHome@main"
+  log_frames: "false"
+  max_connections: "4"
+  ble_io_capability: "none"
+
+external_components:
+  - source: ${truma_source}
+    components: [truma_inetx]
+
+esp32_ble:
+  # 3 emplacements du proxy Bluetooth + 1 pour l'Aventa
+  max_connections: ${max_connections}
+  # "none" = Just Works (comportement par défaut d'un proxy) ;
+  # "keyboard_only" si l'Aventa exige un code PIN (voir aventa_pin)
+  io_capability: ${ble_io_capability}
+
+time:
+  - platform: homeassistant
+    id: truma_time
+
+ble_client:
+  - id: truma_aventa_ble
+    mac_address: ${aventa_mac}
+    auto_connect: true
+
+truma_inetx:
+  - id: truma
+    ble_client_id: truma_aventa_ble
+    time_id: truma_time
+    pin: "${aventa_pin}"
+    user_name: "Home Assistant"
+    log_frames: ${log_frames}
+
+climate:
+  - platform: truma_inetx
+    id: truma_climate
+    truma_inetx_id: truma
+    name: "${aventa_name}"
+    # Valeurs iNet X (à confirmer dans les logs en utilisant la télécommande) :
+    # RoomClimate.Mode 0=arrêt 1=auto 2=froid 3=chauffage 4=chauffage clim 5=ventilation 6=déshumidification
+    mode_parameter:
+      topic: RoomClimate
+      parameter: Mode
+      values:
+        "OFF": 0
+        AUTO: 1
+        COOL: 2
+        HEAT: 4
+        FAN_ONLY: 5
+        DRY: 6
+    target_temperature_parameter:
+      topic: RoomClimate
+      parameter: TgtTemp
+    current_temperature_parameter:
+      topic: AirCooling
+      parameter: Temp
+    preset_parameter:
+      topic: AirCooling
+      parameter: Mode
+      values:
+        COMFORT: 0
+        BOOST: 1
+    action_parameter:
+      topic: AirCooling
+      parameter: Active
+      values:
+        "OFF": 0
+        COOLING: 1
+        IDLE: 2
+    visual:
+      min_temperature: 16
+      max_temperature: 30
+      temperature_step:
+        target_temperature: 0.5
+        current_temperature: 0.1
+
+sensor:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "${aventa_name} température intérieure"
+    topic: AirCooling
+    parameter: Temp
+    multiplier: 0.1
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+
+number:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "${aventa_name} ventilation"
+    topic: AirCirculation
+    parameter: FanLevel
+    min_value: 0
+    max_value: 10
+    step: 1
+    mode: slider
+    icon: mdi:fan
+
+binary_sensor:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "${aventa_name} connectée"
+    device_class: connectivity
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "${aventa_name} état Bluetooth"
+    entity_category: diagnostic
+
+switch:
+  # coupe/rétablit la connexion de l'ESP32 (libère la clim pour l'app ou la télécommande)
+  - platform: ble_client
+    ble_client_id: truma_aventa_ble
+    name: "${aventa_name} connexion Bluetooth"
+    entity_category: config
+    icon: mdi:bluetooth-connect
+
+button:
+  - platform: template
+    name: "${aventa_name} appairer"
+    entity_category: config
+    icon: mdi:bluetooth-settings
+    on_press:
+      - lambda: id(truma).start_pairing();
+  - platform: template
+    name: "${aventa_name} oublier l'appairage"
+    entity_category: config
+    icon: mdi:link-variant-off
+    on_press:
+      - ble_client.remove_bond:
+          id: truma_aventa_ble
+      - lambda: id(truma).forget_remembered_address();
+  - platform: template
+    name: "${aventa_name} relire les paramètres"
+    entity_category: diagnostic
+    icon: mdi:refresh
+    on_press:
+      - lambda: id(truma).refresh();
+  - platform: template
+    name: "${aventa_name} journaliser les paramètres"
+    entity_category: diagnostic
+    icon: mdi:text-box-search-outline
+    on_press:
+      - lambda: id(truma).dump_parameters();
+
+api:
+  actions:
+    # Exploration depuis Home Assistant : Outils de développement > Actions
+    - action: truma_write
+      variables:
+        topic: string
+        parameter: string
+        value: int
+      then:
+        - lambda: id(truma).write_int(topic, parameter, value);

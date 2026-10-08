@@ -1,0 +1,91 @@
+# CI compile test: an ESP32 Bluetooth proxy + the Truma Aventa package,
+# using the components of this checkout instead of GitHub.
+esphome:
+  name: truma-test
+  friendly_name: Truma test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: "Pb5PVodKS1Dm3DT2X2gyXzNjVWfg3Rp/Ky5MFkrMTEs="
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: "test"
+  password: "testtesttest"
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+packages:
+  truma: !include
+    file: ../packages/truma-aventa.yaml
+    vars:
+      aventa_mac: "C4:5B:BE:12:34:56"
+      aventa_pin: "123456"
+      truma_source: ../components
+      log_frames: "true"
+
+# Every platform, with non-default options, to exercise the code generation.
+truma_inetx:
+  - id: !extend truma
+    device_name: "Aventa"
+    discovery_addresses: [0x0101, 0x0202]
+    destinations:
+      RoomClimate: 0x0202
+
+sensor:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Fan level raw"
+    topic: AirCirculation
+    parameter: FanLevel
+
+select:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Cooling mode"
+    topic: AirCooling
+    parameter: Mode
+    options:
+      0: "Confort"
+      1: "Rapide"
+
+switch:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Cooling active"
+    topic: AirCooling
+    parameter: Active
+
+binary_sensor:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Cooling running"
+    topic: AirCooling
+    parameter: Active
+
+text_sensor:
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Room climate mode raw"
+    topic: RoomClimate
+    parameter: Mode
+
+# Explicit POSIX timezone: lets the test generate code without tz database lookups.
+time:
+  - id: !extend truma_time
+    timezone: "CET-1CEST,M3.5.0,M10.5.0/3"

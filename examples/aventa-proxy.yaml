@@ -1,0 +1,68 @@
+# Exemple complet : ESP32 proxy Bluetooth Home Assistant + climatisation Truma Aventa 2.
+# Seul le bloc `packages:` est à ajouter à une configuration de proxy existante.
+
+substitutions:
+  name: proxy-camping-car
+  friendly_name: Proxy camping-car
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf   # recommandé pour le Bluetooth (obligatoire pour un proxy actif)
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+# ---------------------------------------------------------------------------
+# Truma Aventa
+# ---------------------------------------------------------------------------
+packages:
+  truma_aventa:
+    url: https://github.com/Phil-ibert/Truma-Aventa2-ESPHome
+    ref: main            # ou une version figée, ex. v0.1.0
+    refresh: 1d
+    files:
+      - path: packages/truma-aventa.yaml
+        vars:
+          # Laisser 00:00:... au premier démarrage puis utiliser le bouton
+          # « Aventa appairer » : l'adresse est trouvée et mémorisée toute seule.
+          aventa_mac: "00:00:00:00:00:00"
+          aventa_pin: ""          # code à 6 chiffres si l'Aventa en demande un
+          aventa_name: "Aventa"
+          truma_source: "github://Phil-ibert/Truma-Aventa2-ESPHome@main"
+          log_frames: "false"     # "true" pour voir chaque trame décodée
+
+# Exemple de personnalisation sans modifier le package : corriger une valeur de mode
+# après l'avoir lue dans les logs en utilisant la télécommande d'origine.
+# climate:
+#   - id: !extend truma_climate
+#     mode_parameter:
+#       topic: RoomClimate
+#       parameter: Mode
+#       values:
+#         "OFF": 0
+#         COOL: 2
+#         HEAT: 3
+#         FAN_ONLY: 5
+#         DRY: 6

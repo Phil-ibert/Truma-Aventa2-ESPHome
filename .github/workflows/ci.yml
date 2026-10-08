@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # weekly: catch breaking changes in new ESPHome releases early
+    - cron: "17 4 * * 1"
+
+jobs:
+  codec-tests:
+    name: Protocol codec unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run (ASan + UBSan)
+        run: sh tests/run_tests.sh
+
+  esphome-compile:
+    name: ESPHome ${{ matrix.esphome }} compile
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        esphome: ["stable", "beta"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ESPHome
+        run: |
+          if [ "${{ matrix.esphome }}" = "beta" ]; then
+            pip install --pre esphome
+          else
+            pip install esphome
+          fi
+          esphome version
+      - name: Cache PlatformIO / ESP-IDF
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.esphome
+            tests/.esphome
+          key: esphome-${{ matrix.esphome }}-${{ hashFiles('tests/test-esp32.yaml') }}
+      - name: Validate configuration
+        run: esphome config tests/test-esp32.yaml
+      - name: Compile
+        run: esphome compile tests/test-esp32.yaml

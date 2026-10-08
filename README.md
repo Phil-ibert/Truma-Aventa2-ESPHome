@@ -1,1 +1,261 @@
-# Truma-Aventa2-ESPHome
+# ESPHome – Truma Aventa 2e génération (Bluetooth)
+
+Pilotez une climatisation de toit **Truma Aventa 2e génération** depuis Home Assistant, sans panneau
+iNet X : un ESP32 sous ESPHome, qui peut déjà servir de proxy Bluetooth, se connecte directement à la
+clim en Bluetooth Low Energy et parle le même protocole que l'app **Truma iNet X**.
+
+> **Statut : expérimental.** Le protocole (iNet X, « TruMessageV3 » + CBOR) a été validé sur du
+> matériel réel par le projet [daaaaan/truma-inetx-ble](https://github.com/daaaaan/truma-inetx-ble)
+> (panneau iNet X + chauffage Combi). L'Aventa 2 utilise l'app iNet X, donc a priori le même
+> protocole. Le comportement exact de l'Aventa **sans panneau** reste à confirmer : appairage,
+> adresses internes, valeurs des modes. Le composant est conçu pour le découvrir et le journaliser
+> tout seul. Projet non affilié à Truma.
+
+## Sommaire
+
+- [Ce que vous obtenez](#ce-que-vous-obtenez)
+- [Prérequis](#prérequis)
+- [Installation depuis GitHub](#installation-depuis-github)
+- [Premier appairage et adresses tournantes (RPA)](#premier-appairage-et-adresses-tournantes-rpa)
+- [Étalonnage avec la télécommande d'origine](#étalonnage-avec-la-télécommande-dorigine)
+- [Synchronisation avec la télécommande](#synchronisation-avec-la-télécommande)
+- [Explorer d'autres paramètres](#explorer-dautres-paramètres)
+- [Référence de configuration](#référence-de-configuration)
+- [Dépannage](#dépannage)
+- [Développement](#développement)
+
+## Ce que vous obtenez
+
+| Entité Home Assistant | Rôle |
+|---|---|
+| `climate` **Aventa** | marche/arrêt, mode (froid, chauffage, ventilation, déshumidification, auto), consigne, température, préréglage Confort/Boost |
+| `sensor` température intérieure | température mesurée par la clim |
+| `number` ventilation | niveau du ventilateur |
+| `binary_sensor` connectée | session iNet X opérationnelle |
+| `text_sensor` état Bluetooth | `disconnected`, `connecting`, `securing`, `registering`, `ready`… |
+| `switch` connexion Bluetooth | coupe/rétablit la connexion de l'ESP32 (pour libérer la clim) |
+| `button` appairer | trouve l'Aventa la plus proche, s'y connecte et fait le bonding |
+| `button` oublier l'appairage | supprime le bond et l'adresse mémorisée |
+| `button` relire / journaliser les paramètres | diagnostic |
+| action `esphome.<nœud>_truma_write` | écrire n'importe quel paramètre iNet X depuis Home Assistant |
+
+Toutes les correspondances entre Home Assistant et les valeurs iNet X sont configurables en YAML.
+Aucune n'est figée dans le code C++.
+
+## Prérequis
+
+- **ESPHome 2026.9 ou plus récent** : testé avec 2026.9.1 et la branche de développement 2026.11.
+- Un **ESP32** avec le framework **esp-idf**. ESP32 classique, S3 ou C3.
+- Si l'ESP32 est déjà un proxy Bluetooth : chaque connexion active consomme un emplacement. Le
+  package règle `esp32_ble: max_connections: 4`, soit 3 pour le proxy et 1 pour l'Aventa. Ajustez
+  avec la variable `max_connections` si votre proxy utilise plus d'emplacements.
+
+## Installation depuis GitHub
+
+Ajoutez ce bloc à la configuration YAML de votre ESP32 existant :
+
+```yaml
+packages:
+  truma_aventa:
+    url: https://github.com/Phil-ibert/Truma-Aventa2-ESPHome
+    ref: main            # ou une version figée (tag), ex. v0.1.0
+    refresh: 1d
+    files:
+      - path: packages/truma-aventa.yaml
+        vars:
+          aventa_mac: "00:00:00:00:00:00"   # voir « Premier appairage »
+          aventa_pin: ""                    # code à 6 chiffres si l'Aventa en demande un
+          aventa_name: "Aventa"
+          truma_source: "github://Phil-ibert/Truma-Aventa2-ESPHome@main"
+```
+
+Installez le firmware. Les mises à jour du composant arrivent ensuite à chaque recompilation
+(`refresh: 1d`). Pour figer une version, utilisez un tag dans `ref` et `truma_source`.
+
+Un exemple complet est disponible : [examples/aventa-proxy.yaml](examples/aventa-proxy.yaml).
+
+## Premier appairage et adresses tournantes (RPA)
+
+Un appareil Bluetooth peut publier une **adresse privée résolvable (RPA)**. Cette adresse change
+périodiquement (souvent toutes les 15 minutes) et à chaque redémarrage. Une adresse MAC fixe dans le
+YAML ne suffirait alors pas. Le composant gère ce cas.
+
+**Ce qui se passe après l'appairage avec bonding.** L'Aventa transmet sa clé d'identité (IRK). La
+pile Bluetooth de l'ESP32 (Bluedroid) la stocke en flash avec le bond. Ensuite, elle **résout
+elle-même** chaque nouvelle RPA :
+- elle présente à ESPHome une adresse stable, celle enregistrée avec le bond ;
+- elle se connecte avec la dernière RPA vue.
+
+Ce fonctionnement est vérifié dans le code source d'ESP-IDF 5.5 : `btm_ble_gap.c` et `l2c_ble.c`.
+La liaison survit donc :
+- **à une coupure de courant de la clim** : nouvelle RPA, mais même IRK ;
+- **à un redémarrage de l'ESP32** : le bond et l'IRK sont en NVS. Le composant mémorise en plus
+  l'adresse stable et la réapplique au démarrage.
+
+**Procédure du premier appairage :**
+
+1. Installez le firmware avec `aventa_mac: "00:00:00:00:00:00"`.
+2. Ouvrez les logs. Chaque appareil Truma entendu y apparaît une fois, avec le type de son adresse :
+   ```
+   [truma_inetx] Truma device heard: 6A:1F:..., resolvable private (RPA, rotates), RSSI -58 dBm, name '...'
+   ```
+   - `public (fixed)` ou `random static` : l'adresse est fixe. Vous pouvez la mettre directement
+     dans `aventa_mac`.
+   - `resolvable private (RPA, rotates)` : il faut passer par le bonding, à l'étape suivante.
+3. Si besoin, mettez la clim en mode appairage Bluetooth (voir sa notice). Appuyez ensuite sur
+   **« Aventa appairer »** dans Home Assistant. L'ESP32 écoute 8 secondes, choisit l'appareil Truma
+   le plus proche (meilleur signal), s'y connecte et fait le bonding. Si l'Aventa demande un code,
+   renseignez `aventa_pin` et `ble_io_capability: "keyboard_only"`.
+4. Les logs confirment le résultat :
+   ```
+   [truma_inetx] Bond stored: address XX:..., identity address YY:..., IRK received: ...
+   [truma_inetx] Address XX:... remembered for the next restarts
+   ```
+   Vous pouvez reporter cette adresse dans `aventa_mac`. Ce n'est pas obligatoire.
+
+> **À éviter :** ré-appairer en boucle. La clim mémorise un nombre limité d'appareils. Un excès de
+> bonds pourrait évincer la télécommande d'origine.
+
+**Cas particulier.** Si la clim change d'adresse **sans** proposer de bonding, ajoutez
+`device_name: "<nom publié>"` (visible dans les logs) au composant `truma_inetx`. L'ESP32 suivra
+alors la clim par son nom.
+
+## Étalonnage avec la télécommande d'origine
+
+Les valeurs des modes viennent du protocole iNet X. Il faut les confirmer sur l'Aventa : la
+télécommande d'origine sert de référence.
+
+1. Une fois connecté, les logs listent chaque paramètre découvert :
+   ```
+   [truma_inetx] New parameter RoomClimate.Mode = 2 (from 0x0202)
+   [truma_inetx] [0x0202] AirCooling.Mode = 0 min=0 max=1 enum=[{"n":"COMFORT",...},{"n":"FAST",...}]
+   ```
+2. Changez le mode, la consigne et la ventilation **avec la télécommande**. Chaque changement
+   s'affiche, par exemple `RoomClimate.Mode: 0 -> 2`.
+3. Si une valeur diffère de celle du package, corrigez-la sans toucher au package :
+   ```yaml
+   climate:
+     - id: !extend truma_climate
+       mode_parameter:
+         topic: RoomClimate
+         parameter: Mode
+         values:
+           "OFF": 0
+           COOL: 2
+           HEAT: 3
+           FAN_ONLY: 5
+           DRY: 6
+   ```
+4. Le bouton **« journaliser les paramètres »** affiche à tout moment tous les paramètres connus.
+
+Pour voir le détail de chaque trame échangée, utilisez la variable `log_frames: "true"`.
+
+## Synchronisation avec la télécommande
+
+La télécommande de l'Aventa 2 est **Bluetooth**, pas infrarouge. C'est donc la clim qui détient
+l'état de référence :
+- **Télécommande → Home Assistant** : la clim diffuse chaque changement à ses abonnés, dont l'ESP32.
+- **Home Assistant → télécommande** : l'ESP32 modifie l'état de la clim elle-même. L'affichage de la
+  télécommande suit si elle est abonnée, ce qui est probable.
+
+Point à vérifier sur votre installation : le nombre de connexions simultanées acceptées par l'Aventa
+(télécommande + app + ESP32). Si l'app ne parvient plus à se connecter, coupez temporairement
+l'interrupteur **« connexion Bluetooth »**.
+
+## Explorer d'autres paramètres
+
+- **Lire n'importe quel paramètre** avec les plateformes génériques `sensor`, `binary_sensor`,
+  `text_sensor`, `number`, `select` ou `switch` du composant `truma_inetx` :
+  ```yaml
+  select:
+    - platform: truma_inetx
+      truma_inetx_id: truma
+      name: "Aventa mode de refroidissement"
+      topic: AirCooling
+      parameter: Mode
+      options:
+        0: "Confort"
+        1: "Rapide"
+  ```
+- **Écrire un paramètre depuis Home Assistant** : allez dans Outils de développement > Actions,
+  choisissez `ESPHome: <nœud>_truma_write`, puis renseignez `topic`, `parameter` et `value`.
+- **Depuis une lambda** : `id(truma).write_int("AirCooling", "Mode", 1);`, `id(truma).refresh();`,
+  `id(truma).get_value("RoomClimate", "TgtTemp")`.
+
+Le protocole et la liste des topics connus sont décrits dans [docs/protocol.md](docs/protocol.md).
+La procédure de capture avec un sniffer nRF et Wireshark est dans
+[docs/capture-ble.md](docs/capture-ble.md).
+
+## Référence de configuration
+
+### `truma_inetx` (composant principal)
+
+| Option | Défaut | Description |
+|---|---|---|
+| `ble_client_id` | — | le `ble_client` de l'Aventa |
+| `time_id` | — | horloge à envoyer à la clim (`SystemTime`), facultative |
+| `pin` | aucun | code à 6 chiffres envoyé si la clim en demande un (avec `ble_io_capability: "keyboard_only"` dans les variables du package) |
+| `encryption` | `true` | lance l'appairage/chiffrement à la connexion |
+| `user_name` | `ESPHome` | nom présenté à la clim (comme un téléphone) |
+| `muid` / `uuid` | dérivés du nom du nœud | identité stable exigée par la clim. Ne la changez pas après l'appairage |
+| `topics` | les 33 topics de l'app | topics auxquels s'abonner |
+| `discovery_addresses` | `0x0101, 0x0201, 0x0202` | équipements interrogés au démarrage. Les adresses vues ensuite sont ajoutées automatiquement |
+| `default_destination` | `0x0101` | destination des écritures tant qu'aucune adresse n'est apprise |
+| `destinations` | — | forcer une destination par topic, ex. `RoomClimate: 0x0202` |
+| `optimistic` | `true` | met à jour Home Assistant dès l'envoi, sans attendre la confirmation de la clim |
+| `remember_address` | `true` | mémorise l'adresse stable après appairage (voir RPA) |
+| `device_name` | — | suit la clim par son nom publié si elle change d'adresse sans bonding |
+| `log_advertisements` | `true` | journalise les appareils Truma entendus |
+| `log_frames` | `false` | journalise chaque trame décodée |
+| `frame_delay` | `100ms` | délai minimal entre deux messages |
+
+### Plateformes d'entités
+
+Toutes acceptent `truma_inetx_id`, `topic` et `parameter`, ainsi que les options standard d'ESPHome.
+
+- `climate` : `mode_parameter`, `target_temperature_parameter`, `current_temperature_parameter`,
+  `fan_mode_parameter`, `preset_parameter`, `action_parameter`, `temperature_multiplier` (0.1 par
+  défaut, car l'iNet X compte en dixièmes de degré). Chaque `*_parameter` prend `topic`,
+  `parameter` et `values` (mode Home Assistant → valeur iNet X).
+- `sensor` / `number` : `multiplier`. `number` prend aussi `min_value`, `max_value` et `step`.
+- `select` : `options` (valeur iNet X → libellé).
+- `switch` : `on_value` (1) et `off_value` (0).
+- `binary_sensor` / `text_sensor` : sans `topic`, ils donnent l'état de la connexion.
+
+## Dépannage
+
+| Symptôme | Piste |
+|---|---|
+| Aucune ligne `Truma device heard` | La clim est-elle alimentée ? Son Bluetooth est-il activé ? L'ESP32 est-il à portée ? |
+| Avertissement `BLE components require N connection slot(s)` | Augmentez `max_connections` ou réduisez `bluetooth_proxy: connection_slots`. |
+| `Pairing failed (reason 0x..)` | PIN erroné (`aventa_pin`), ou clim pas en mode appairage. Après une réinitialisation de la clim, utilisez « oublier l'appairage » puis « appairer ». |
+| `Write refused by the device: pairing required` | Appairage nécessaire : vérifiez `encryption` et `pin`. |
+| `Truma iNet X service/characteristics not found` | La disposition GATT diffère : elle est imprimée juste en dessous. Ouvrez une issue avec ce log. |
+| `No registration response` | Protocole différent sur l'Aventa : activez `log_frames` et faites une capture (voir [docs/capture-ble.md](docs/capture-ble.md)). |
+| Un mode ne s'applique pas | Étalonnez les valeurs avec la télécommande (voir plus haut). |
+
+## Développement
+
+```
+components/truma_inetx/   composant ESPHome externe
+  cbor.*  frame.*          codec CBOR + trames TruMessageV3 (C++ pur, testable sur PC)
+  truma_inetx.*            connexion BLE, transport, session iNet X, adresses/bonding
+  climate/ sensor/ ...     plateformes d'entités
+packages/truma-aventa.yaml package prêt à l'emploi
+tests/                     tests unitaires du codec + configuration de compilation CI
+docs/                      protocole et guide de capture BLE
+```
+
+- `sh tests/run_tests.sh` : tests du codec avec ASan/UBSan et fuzzing. Les trames construites sont
+  identiques octet pour octet à celles de l'implémentation de référence.
+- La CI GitHub (`.github/workflows/ci.yml`) compile `tests/test-esp32.yaml` avec les versions
+  stable et bêta d'ESPHome, à chaque push et chaque semaine. Une nouvelle version d'ESPHome qui
+  casserait le composant est ainsi détectée tôt.
+
+## Crédits et licence
+
+- Protocole iNet X documenté par [daaaaan/truma-inetx-ble](https://github.com/daaaaan/truma-inetx-ble)
+  (analyse de trafic et tests d'interopérabilité). Ce dépôt est une implémentation indépendante pour
+  ESPHome. Aucun code n'en est repris.
+- Licence MIT. Truma, Aventa et iNet X sont des marques de Truma Gerätetechnik GmbH & Co. KG.
+  Projet non affilié à Truma, à utiliser à vos risques.

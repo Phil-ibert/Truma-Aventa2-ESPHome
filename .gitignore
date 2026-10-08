@@ -1,0 +1,7 @@
+build/
+.esphome/
+**/.esphome/
+__pycache__/
+*.pyc
+secrets.yaml
+*.pcapng
