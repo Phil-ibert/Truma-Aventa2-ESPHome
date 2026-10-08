@@ -82,6 +82,11 @@ DEFAULT_TOPICS = [
     "System",
     "Resources",
     "PowerMgmt",
+    # Aventa 2 topics missing from the app list above: without them, the dehumidifier
+    # state was only seen by the periodic poll (the action stayed "drying" for up to a minute)
+    "AirDehumid",
+    "ACCAirCooling",
+    "ACCAirHeating",
 ]
 
 # Aventa 2 (observed): 0x0101 = built-in "iNet X Interface AC", 0x0801 = the air conditioner.
