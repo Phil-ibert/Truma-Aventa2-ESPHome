@@ -5,6 +5,7 @@
 #include "esphome/components/climate/climate.h"
 #include "../truma_inetx.h"
 
+#include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,6 +30,8 @@ class TrumaInetXClimate : public climate::Climate, public Component, public Pare
   void set_current_parameter(const std::string &topic, const std::string &param) { this->current_param_ = {topic, param}; }
   void set_fan_mode_parameter(const std::string &topic, const std::string &param) { this->fan_param_ = {topic, param}; }
   void add_fan_mode(climate::ClimateFanMode mode, int64_t value) { this->fan_values_.emplace_back(mode, value); }
+  /// Custom fan mode shown with its own label in Home Assistant (label must have static storage).
+  void add_custom_fan_mode(const char *label, int64_t value) { this->custom_fan_values_.emplace_back(label, value); }
   void set_preset_parameter(const std::string &topic, const std::string &param) { this->preset_param_ = {topic, param}; }
   void add_preset(climate::ClimatePreset preset, int64_t value) { this->preset_values_.emplace_back(preset, value); }
   void set_action_parameter(const std::string &topic, const std::string &param) { this->action_param_ = {topic, param}; }
@@ -54,6 +57,7 @@ class TrumaInetXClimate : public climate::Climate, public Component, public Pare
   Param action_param_;
   std::vector<std::pair<climate::ClimateMode, int64_t>> mode_values_;
   std::vector<std::pair<climate::ClimateFanMode, int64_t>> fan_values_;
+  std::vector<std::pair<const char *, int64_t>> custom_fan_values_;
   std::vector<std::pair<climate::ClimatePreset, int64_t>> preset_values_;
   std::vector<std::pair<climate::ClimateAction, int64_t>> action_values_;
 };

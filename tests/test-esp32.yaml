@@ -105,6 +105,12 @@ climate:
         LOW: 2
         MEDIUM: 5
         HIGH: 10
+        "Silence": 1
+  # default fan mapping with the custom levels hidden (Auto only)
+  - platform: truma_inetx
+    truma_inetx_id: truma
+    name: "Aventa auto fan only"
+    custom_fan_modes: false
 
 button:
   - platform: truma_inetx

@@ -70,8 +70,8 @@ climate:
         FAN_ONLY: 5
         DRY: 6
     # consigne (RoomClimate.TgtTemp), température (AirCooling.Temp), préréglages
-    # Confort/Boost (AirCooling.Mode) et action (AirCooling.Active) : valeurs par défaut
-    # du composant pour l'Aventa
+    # Confort/Boost (AirCooling.Mode), action (AirCooling.Active) et ventilation
+    # Auto + "1".."10" (AirCirculation.FanLevel) : valeurs par défaut du composant
     visual:
       min_temperature: 16
       max_temperature: 30

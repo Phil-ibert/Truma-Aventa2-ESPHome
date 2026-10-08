@@ -45,11 +45,27 @@ void TrumaInetXClimate::setup() {
   }
 
   if (this->fan_param_.configured()) {
+    if (!this->custom_fan_values_.empty()) {
+      std::vector<const char *> labels;
+      labels.reserve(this->custom_fan_values_.size());
+      for (const auto &f : this->custom_fan_values_)
+        labels.push_back(f.first);
+      this->set_supported_custom_fan_modes(labels);
+    }
     hub->register_listener(this->fan_param_.topic, this->fan_param_.param, [this](const cbor::Value &value) {
+      if (!value.is_number())
+        return;
       int64_t wire = value.as_int();
       for (const auto &f : this->fan_values_) {
         if (f.second == wire) {
-          this->fan_mode = f.first;
+          this->set_fan_mode_(f.first);
+          this->schedule_publish_();
+          return;
+        }
+      }
+      for (const auto &f : this->custom_fan_values_) {
+        if (f.second == wire) {
+          this->set_custom_fan_mode_(f.first);
           this->schedule_publish_();
           return;
         }
@@ -64,7 +80,7 @@ void TrumaInetXClimate::setup() {
       int64_t wire = value.as_int();
       for (const auto &p : this->preset_values_) {
         if (p.second == wire) {
-          this->preset = p.first;
+          this->set_preset_(p.first);
           this->schedule_publish_();
           return;
         }
@@ -145,12 +161,22 @@ void TrumaInetXClimate::control(const climate::ClimateCall &call) {
     hub->write_int(this->target_param_.topic, this->target_param_.param, wire);
   }
 
-  if (call.get_fan_mode().has_value() && this->fan_param_.configured()) {
-    climate::ClimateFanMode fan = *call.get_fan_mode();
-    for (const auto &f : this->fan_values_) {
-      if (f.first == fan) {
-        hub->write_int(this->fan_param_.topic, this->fan_param_.param, f.second);
-        break;
+  if (this->fan_param_.configured()) {
+    if (call.get_fan_mode().has_value()) {
+      climate::ClimateFanMode fan = *call.get_fan_mode();
+      for (const auto &f : this->fan_values_) {
+        if (f.first == fan) {
+          hub->write_int(this->fan_param_.topic, this->fan_param_.param, f.second);
+          break;
+        }
+      }
+    } else if (call.has_custom_fan_mode()) {
+      auto label = call.get_custom_fan_mode();
+      for (const auto &f : this->custom_fan_values_) {
+        if (label.size() == strlen(f.first) && strncmp(label.c_str(), f.first, label.size()) == 0) {
+          hub->write_int(this->fan_param_.topic, this->fan_param_.param, f.second);
+          break;
+        }
       }
     }
   }
@@ -177,7 +203,9 @@ void TrumaInetXClimate::dump_config() {
     ESP_LOGCONFIG(TAG, "  Current temperature: %s.%s", this->current_param_.topic.c_str(),
                   this->current_param_.param.c_str());
   if (this->fan_param_.configured())
-    ESP_LOGCONFIG(TAG, "  Fan mode: %s.%s", this->fan_param_.topic.c_str(), this->fan_param_.param.c_str());
+    ESP_LOGCONFIG(TAG, "  Fan mode: %s.%s (%u standard, %u custom)", this->fan_param_.topic.c_str(),
+                  this->fan_param_.param.c_str(), (unsigned) this->fan_values_.size(),
+                  (unsigned) this->custom_fan_values_.size());
   if (this->preset_param_.configured())
     ESP_LOGCONFIG(TAG, "  Preset: %s.%s", this->preset_param_.topic.c_str(), this->preset_param_.param.c_str());
   if (this->action_param_.configured())

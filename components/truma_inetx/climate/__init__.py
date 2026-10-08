@@ -20,6 +20,7 @@ CONF_FAN_MODE_PARAMETER = "fan_mode_parameter"
 CONF_PRESET_PARAMETER = "preset_parameter"
 CONF_ACTION_PARAMETER = "action_parameter"
 CONF_TEMPERATURE_MULTIPLIER = "temperature_multiplier"
+CONF_CUSTOM_FAN_MODES = "custom_fan_modes"
 
 TrumaInetXClimate = truma_inetx_ns.class_(
     "TrumaInetXClimate", climate.Climate, cg.Component
@@ -38,6 +39,14 @@ DEFAULT_ACTION = {
     CONF_TOPIC: "AirCooling",
     CONF_PARAMETER: "Active",
     CONF_VALUES: {"OFF": 0, "COOLING": 1, "IDLE": 2},
+}
+
+# Fan: Home Assistant "Auto" + custom fan modes "1".."10" on AirCirculation.FanLevel.
+# AUTO = 0 is provisional: confirm with the logs while selecting Auto on the remote.
+DEFAULT_FAN = {
+    CONF_TOPIC: "AirCirculation",
+    CONF_PARAMETER: "FanLevel",
+    CONF_VALUES: {"AUTO": 0, **{str(level): level for level in range(1, 11)}},
 }
 
 DEFAULT_MODE_VALUES = {
@@ -73,6 +82,29 @@ def _mapping_schema(key_validator, default_topic=None, default_parameter=None, d
             values: cv.All(cv.Schema({key_validator: cv.int_}), cv.Length(min=1)),
         }
     )
+
+
+def _fan_mode_key(value):
+    """Standard fan mode name (AUTO, LOW, MEDIUM, HIGH, QUIET...) or any custom label."""
+    value = cv.string_strict(str(value)) if isinstance(value, int) else cv.string_strict(value)
+    if not value.strip():
+        raise cv.Invalid("Fan mode names cannot be empty")
+    if value.upper() in climate.CLIMATE_FAN_MODES:
+        return value.upper()
+    return value
+
+
+def _validate_unique_wire_values(config):
+    if not config:
+        return config
+    seen = {}
+    for name, wire in config[CONF_VALUES].items():
+        if wire in seen:
+            raise cv.Invalid(
+                f"'{name}' and '{seen[wire]}' use the same value {wire}: each value must map to one mode"
+            )
+        seen[wire] = name
+    return config
 
 
 def _parameter_schema(default_topic=None, default_parameter=None):
@@ -123,8 +155,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_CURRENT_TEMPERATURE_PARAMETER, default=DEFAULT_CURRENT
             ): _disableable(_parameter_schema()),
-            cv.Optional(CONF_FAN_MODE_PARAMETER): _disableable(
-                _mapping_schema(climate.validate_climate_fan_mode)
+            cv.Optional(CONF_FAN_MODE_PARAMETER, default=DEFAULT_FAN): _disableable(
+                cv.All(
+                    _mapping_schema(_fan_mode_key, "AirCirculation", "FanLevel"),
+                    _validate_unique_wire_values,
+                )
             ),
             cv.Optional(CONF_PRESET_PARAMETER, default=DEFAULT_PRESET): _disableable(
                 _mapping_schema(climate.validate_climate_preset)
@@ -132,6 +167,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ACTION_PARAMETER, default=DEFAULT_ACTION): _disableable(
                 _mapping_schema(climate.validate_climate_action)
             ),
+            # false = keep only the standard fan modes (e.g. Auto), hide custom labels ("1".."10")
+            cv.Optional(CONF_CUSTOM_FAN_MODES, default=True): cv.boolean,
             # wire value x multiplier = degrees C (iNet X uses tenths of a degree)
             cv.Optional(CONF_TEMPERATURE_MULTIPLIER, default=0.1): cv.positive_float,
         }
@@ -160,9 +197,19 @@ async def to_code(config):
         cg.add(var.set_current_parameter(current[CONF_TOPIC], current[CONF_PARAMETER]))
 
     if fan := config.get(CONF_FAN_MODE_PARAMETER):
-        cg.add(var.set_fan_mode_parameter(fan[CONF_TOPIC], fan[CONF_PARAMETER]))
-        for key, wire in fan[CONF_VALUES].items():
-            cg.add(var.add_fan_mode(climate.CLIMATE_FAN_MODES[key], wire))
+        values = {
+            key: wire
+            for key, wire in fan[CONF_VALUES].items()
+            if key in climate.CLIMATE_FAN_MODES or config[CONF_CUSTOM_FAN_MODES]
+        }
+        if values:
+            cg.add(var.set_fan_mode_parameter(fan[CONF_TOPIC], fan[CONF_PARAMETER]))
+        for key, wire in values.items():
+            if key in climate.CLIMATE_FAN_MODES:
+                cg.add(var.add_fan_mode(climate.CLIMATE_FAN_MODES[key], wire))
+            else:
+                # custom fan mode: the label is shown as-is in Home Assistant
+                cg.add(var.add_custom_fan_mode(key, wire))
 
     if preset := config.get(CONF_PRESET_PARAMETER):
         cg.add(var.set_preset_parameter(preset[CONF_TOPIC], preset[CONF_PARAMETER]))

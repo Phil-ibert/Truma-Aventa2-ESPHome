@@ -181,8 +181,10 @@ télécommande d'origine sert de référence.
    [truma_inetx] New parameter RoomClimate.Mode = 2 (from 0x0202)
    [truma_inetx] [0x0202] AirCooling.Mode = 0 min=0 max=1 enum=[{"n":"COMFORT",...},{"n":"FAST",...}]
    ```
-2. Changez le mode, la consigne et la ventilation **avec la télécommande**. Chaque changement
-   s'affiche, par exemple `RoomClimate.Mode: 0 -> 2`.
+2. Changez le mode, la consigne et la ventilation **avec la télécommande**, y compris la
+   ventilation automatique. Chaque changement s'affiche, par exemple `RoomClimate.Mode: 0 -> 2`
+   ou `AirCirculation.FanLevel: 4 -> 0`. Une valeur sans correspondance est signalée
+   (`... has no fan mode: add it under fan_mode_parameter.values`).
 3. Si une valeur diffère, corrigez-la dans votre YAML. Avec l'option A, directement dans votre
    entité `climate`. Avec l'option B, sans toucher au package :
    ```yaml
@@ -284,11 +286,20 @@ elles prennent aussi `topic` et `parameter`.
   | `current_temperature_parameter` | `AirCooling.Temp` |
   | `preset_parameter` | `AirCooling.Mode` : `COMFORT` 0, `BOOST` 1 |
   | `action_parameter` | `AirCooling.Active` : `OFF` 0, `COOLING` 1, `IDLE` 2 |
-  | `fan_mode_parameter` | aucun |
+  | `fan_mode_parameter` | `AirCirculation.FanLevel` : `AUTO` 0 (provisoire, à confirmer), puis les vitesses `"1"` à `"10"` |
   | `temperature_multiplier` | 0.1 (l'iNet X compte en dixièmes de degré) |
 
   Chaque `*_parameter` prend `topic`, `parameter` et `values` (mode Home Assistant → valeur
-  iNet X). La valeur `false` désactive un paramètre optionnel.
+  iNet X). La valeur `false` désactive un paramètre optionnel. Dans `fan_mode_parameter.values`,
+  les noms standard (`AUTO`, `LOW`, `MEDIUM`, `HIGH`, `QUIET`…) sont traduits par Home Assistant ;
+  tout autre nom (ex. `"Nuit"`, `"5"`) est affiché tel quel :
+  ```yaml
+  fan_mode_parameter:
+    values: {AUTO: 0, LOW: 3, MEDIUM: 6, HIGH: 10, "Nuit": 1}
+  ```
+  `custom_fan_modes: false` masque les noms personnalisés et ne garde que les modes standard
+  (avec les valeurs par défaut : seulement `Auto`). `fan_mode_parameter: false` retire toute la
+  ventilation de l'entité climatisation.
 - `button` : `type` parmi `pair` (premier appairage), `forget_pairing` (supprime le bond et
   l'adresse mémorisée), `refresh` (relit tous les paramètres), `dump_parameters` (les journalise).
 - `sensor` / `number` : `multiplier`. `number` prend aussi `min_value`, `max_value` et `step`.
