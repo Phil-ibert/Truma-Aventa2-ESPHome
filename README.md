@@ -275,7 +275,7 @@ La procédure de capture avec un sniffer nRF et Wireshark est dans
 | `encryption` | `true` | lance l'appairage/chiffrement à la connexion |
 | `user_name` | `ESPHome` | nom présenté à la clim (comme un téléphone) |
 | `muid` / `uuid` | dérivés du nom du nœud | identité stable exigée par la clim. Ne la changez pas après l'appairage |
-| `topics` | les 33 topics de l'app + `AirDehumid`, `ACCAirCooling`, `ACCAirHeating` (Aventa) | topics auxquels s'abonner : la clim signale d'elle-même les changements de ces topics, les autres ne sont vus qu'à la relecture périodique |
+| `topics` | les 33 topics de l'app + `AirDehumid`, `ACCAirCooling`, `ACCAirHeating`, `BleRemoteControl` (Aventa) | topics auxquels s'abonner : la clim signale d'elle-même les changements de ces topics, les autres ne sont vus qu'à la relecture périodique |
 | `discovery_addresses` | `0x0101, 0x0801` | équipements interrogés au démarrage. Les adresses vues ensuite sont ajoutées automatiquement |
 | `default_destination` | `0x0101` | destination des écritures tant qu'aucune adresse n'est apprise |
 | `destinations` | — | forcer une destination par topic, ex. `AirCooling: 0x0801` |

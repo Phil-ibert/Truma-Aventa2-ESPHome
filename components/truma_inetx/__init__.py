@@ -87,6 +87,9 @@ DEFAULT_TOPICS = [
     "AirDehumid",
     "ACCAirCooling",
     "ACCAirHeating",
+    "BleRemoteControl",  # the Bluetooth remote (0x0602)
+    # Deliberately left out (still read by the poll): Eol (factory test voltages) and
+    # TimeAndDate (the unit's clock), which change all the time and are of no use here.
 ]
 
 # Aventa 2 (observed): 0x0101 = built-in "iNet X Interface AC", 0x0801 = the air conditioner.
