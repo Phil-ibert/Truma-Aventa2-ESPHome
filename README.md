@@ -315,7 +315,7 @@ elles prennent aussi `topic` et `parameter`.
 | Avertissement `BLE components require N connection slot(s)` | Augmentez `max_connections` ou réduisez `bluetooth_proxy: connection_slots`. |
 | `Pairing failed (reason 0x..)` | PIN erroné (`aventa_pin`), ou clim pas en mode appairage. Après une réinitialisation de la clim, utilisez « oublier l'appairage » puis « appairer ». |
 | `Write refused by the device: pairing required` | Appairage nécessaire : vérifiez `encryption` et `pin`. |
-| `Truma iNet X service/characteristics not found` | La disposition GATT diffère : elle est imprimée juste en dessous. Ouvrez une issue avec ce log. |
+| `Truma iNet X characteristics not found` | Le composant cherche `FC314001`–`FC314003` dans tous les services. Si ce message apparaît, la disposition GATT (imprimée juste en dessous) est inattendue : ouvrez une issue avec ce log. |
 | `No registration response` | Protocole différent sur l'Aventa : activez `log_frames` et faites une capture (voir [docs/capture-ble.md](docs/capture-ble.md)). |
 | Un mode ne s'applique pas | Étalonnez les valeurs avec la télécommande (voir plus haut). |
 

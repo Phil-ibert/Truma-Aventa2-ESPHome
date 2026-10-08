@@ -147,6 +147,8 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void set_state_(SessionState state);
   void reset_session_();
   void on_services_discovered_();
+  /// Find a characteristic by UUID in the known services, then anywhere in the GATT database.
+  bool find_characteristic_(const char *uuid, uint16_t *handle, uint8_t *properties);
   void register_notifications_();
   void dump_gatt_database_();
   void queue_gatt_write_(uint16_t handle, std::vector<uint8_t> data, bool response);

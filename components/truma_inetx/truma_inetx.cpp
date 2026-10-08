@@ -362,16 +362,42 @@ void TrumaInetX::gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_
   }
 }
 
-void TrumaInetX::on_services_discovered_() {
-  auto service = espbt::ESPBTUUID::from_raw(SERVICE_UUID);
-  auto *cmd = this->parent()->get_characteristic(service, espbt::ESPBTUUID::from_raw(CHAR_CMD_UUID));
-  auto *data_w = this->parent()->get_characteristic(service, espbt::ESPBTUUID::from_raw(CHAR_DATA_W_UUID));
-  auto *data_r = this->parent()->get_characteristic(service, espbt::ESPBTUUID::from_raw(CHAR_DATA_R_UUID));
+bool TrumaInetX::find_characteristic_(const char *uuid, uint16_t *handle, uint8_t *properties) {
+  const auto char_uuid = espbt::ESPBTUUID::from_raw(uuid);
+  // 1. known services (Aventa 2, then iNet X panel)
+  for (const char *service : {SERVICE_UUID_AVENTA, SERVICE_UUID_PANEL}) {
+    auto *chr = this->parent()->get_characteristic(espbt::ESPBTUUID::from_raw(service), char_uuid);
+    if (chr != nullptr) {
+      *handle = chr->handle;
+      *properties = chr->properties;
+      return true;
+    }
+  }
+  // 2. anywhere in the GATT database (future devices may use yet another service)
+  esp_gattc_char_elem_t result;
+  uint16_t count = 1;
+  esp_gatt_status_t status =
+      esp_ble_gattc_get_char_by_uuid(this->parent()->get_gattc_if(), this->parent()->get_conn_id(), 0x0001, 0xFFFF,
+                                     char_uuid.get_uuid(), &result, &count);
+  if (status == ESP_GATT_OK && count > 0) {
+    *handle = result.char_handle;
+    *properties = result.properties;
+    return true;
+  }
+  return false;
+}
 
-  if (cmd == nullptr || data_w == nullptr || data_r == nullptr) {
-    ESP_LOGE(TAG, "Truma iNet X service/characteristics not found (cmd=%s data_w=%s data_r=%s). GATT layout:",
-             YESNO(cmd != nullptr), YESNO(data_w != nullptr), YESNO(data_r != nullptr));
+void TrumaInetX::on_services_discovered_() {
+  uint8_t cmd_props = 0, data_w_props = 0, data_r_props = 0;
+  bool cmd = this->find_characteristic_(CHAR_CMD_UUID, &this->cmd_handle_, &cmd_props);
+  bool data_w = this->find_characteristic_(CHAR_DATA_W_UUID, &this->data_w_handle_, &data_w_props);
+  bool data_r = this->find_characteristic_(CHAR_DATA_R_UUID, &this->data_r_handle_, &data_r_props);
+
+  if (!cmd || !data_w || !data_r) {
+    ESP_LOGE(TAG, "Truma iNet X characteristics not found (cmd=%s data_w=%s data_r=%s). GATT layout:", YESNO(cmd),
+             YESNO(data_w), YESNO(data_r));
     this->dump_gatt_database_();
+    this->cmd_handle_ = this->data_w_handle_ = this->data_r_handle_ = 0;
     this->set_state_(SessionState::FAILED);
     this->node_state = espbt::ClientState::ESTABLISHED;  // let the parent release its cache
     return;
@@ -379,12 +405,9 @@ void TrumaInetX::on_services_discovered_() {
   if (this->log_frames_)
     this->dump_gatt_database_();
 
-  this->cmd_handle_ = cmd->handle;
-  this->data_w_handle_ = data_w->handle;
-  this->data_r_handle_ = data_r->handle;
-  ESP_LOGD(TAG, "Handles: CMD 0x%04X (props 0x%02X), DATA_W 0x%04X (props 0x%02X), DATA_R 0x%04X (props 0x%02X)",
-           this->cmd_handle_, cmd->properties, this->data_w_handle_, data_w->properties, this->data_r_handle_,
-           data_r->properties);
+  ESP_LOGI(TAG, "iNet X characteristics found: CMD 0x%04X (props 0x%02X), DATA_W 0x%04X (props 0x%02X), "
+                "DATA_R 0x%04X (props 0x%02X)",
+           this->cmd_handle_, cmd_props, this->data_w_handle_, data_w_props, this->data_r_handle_, data_r_props);
 
   if (this->encryption_ && this->parent()->is_paired()) {
     ESP_LOGD(TAG, "Link already encrypted (device-initiated security)");

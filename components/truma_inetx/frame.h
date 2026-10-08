@@ -29,7 +29,11 @@ namespace esphome {
 namespace truma_inetx {
 
 // GATT (all UUIDs share the base -F3B2-11E8-8EB2-F2801F1B9FD1)
-static const char *const SERVICE_UUID = "F47BBBAC-F3B2-11E8-8EB2-F2801F1B9FD1";
+// The characteristics live in different services depending on the device:
+//   Aventa 2nd generation (observed): FC314000-...   iNet X panel: F47BBBAC-...
+static const char *const SERVICE_UUID_AVENTA = "FC314000-F3B2-11E8-8EB2-F2801F1B9FD1";
+static const char *const SERVICE_UUID_PANEL = "F47BBBAC-F3B2-11E8-8EB2-F2801F1B9FD1";
+static const char *const SERVICE_UUID = SERVICE_UUID_PANEL;  // kept for compatibility
 static const char *const CHAR_CMD_UUID = "FC314001-F3B2-11E8-8EB2-F2801F1B9FD1";     // write (with response) + notify
 static const char *const CHAR_DATA_W_UUID = "FC314002-F3B2-11E8-8EB2-F2801F1B9FD1";  // write without response
 static const char *const CHAR_DATA_R_UUID = "FC314003-F3B2-11E8-8EB2-F2801F1B9FD1";  // notify

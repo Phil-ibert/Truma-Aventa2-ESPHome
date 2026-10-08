@@ -11,15 +11,23 @@ Tous les UUID partagent le suffixe `-F3B2-11E8-8EB2-F2801F1B9FD1`.
 
 | Élément | UUID | Usage |
 |---|---|---|
-| Service | `F47BBBAC-…` | service de données |
+| Service | `FC314000-…` | **Aventa 2e génération** (observé) |
+| Service | `F47BBBAC-…` | panneau iNet X |
 | CMD | `FC314001-…` | écriture avec réponse + notifications : contrôle du transport |
 | DATA_W | `FC314002-…` | écriture sans réponse : messages vers l'appareil |
 | DATA_R | `FC314003-…` | notifications : messages de l'appareil |
 | CMD_ALT | `FC314004-…` | **ne pas s'y abonner** (casse le transport) |
 
 Publicités : identifiant constructeur Truma `0x0C73`, UUID de service `FC31xxxx-…`.
-⚠️ Le type d'adresse publié par l'Aventa (publique, statique, RPA) reste à observer. Le composant le
-journalise.
+
+**Observé sur une Aventa 2e génération :**
+- adresse **privée résolvable (RPA)** : les deux bits de poids fort valent `01`, par ex. `51:11:…` ;
+- le service GAP contient « Central Address Resolution » (`0x2AA6`) et « Resolvable Private
+  Address Only » (`0x2AC9`) ; le bonding est donc nécessaire pour se reconnecter après une rotation ;
+- service Device Information (`0x180A`) présent ;
+- propriétés : CMD `0x18` (écriture avec réponse + notification), DATA_W `0x04` (écriture sans
+  réponse), DATA_R et CMD_ALT `0x10` (notification) ;
+- MTU négociée : 251.
 
 ## 2. Transport (caractéristique CMD)
 
