@@ -41,20 +41,8 @@ climate:
   - platform: truma_inetx
     truma_inetx_id: aventa
     name: "Aventa"
-    # Modes, consigne, température, Confort/Boost et action : valeurs par défaut Aventa.
-    # À ajuster si les logs montrent d'autres valeurs avec la télécommande, par exemple :
-    # mode_parameter:
-    #   values: {"OFF": 0, COOL: 2, HEAT: 3, FAN_ONLY: 5, DRY: 6}
-
-number:
-  - platform: truma_inetx
-    truma_inetx_id: aventa
-    name: "Aventa ventilation"
-    topic: AirCirculation
-    parameter: FanLevel
-    min_value: 0
-    max_value: 10
-    mode: slider
+    # Modes, consigne et vitesse de ventilation du mode actif, température et action :
+    # valeurs par défaut relevées sur une Aventa 2 (synchronisées avec la télécommande).
 
 binary_sensor:
   - platform: truma_inetx

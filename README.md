@@ -30,9 +30,8 @@ clim en Bluetooth Low Energy et parle le même protocole que l'app **Truma iNet 
 
 | Entité Home Assistant | Rôle |
 |---|---|
-| `climate` **Aventa** | marche/arrêt, mode (froid, chauffage, ventilation, déshumidification, auto), consigne, température, préréglage Confort/Boost |
+| `climate` **Aventa** | marche/arrêt, mode (froid, chauffage, ventilation, déshumidification, auto), consigne, température, vitesse de ventilation (Auto, Low, Medium, High, Quiet/Nuit), action en cours. Consigne et ventilation suivent la télécommande |
 | `sensor` température intérieure | température mesurée par la clim |
-| `number` ventilation | niveau du ventilateur |
 | `binary_sensor` connectée | session iNet X opérationnelle |
 | `text_sensor` état Bluetooth | `disconnected`, `connecting`, `securing`, `registering`, `ready`… |
 | `switch` connexion Bluetooth | coupe/rétablit la connexion de l'ESP32 (pour libérer la clim) |
@@ -84,7 +83,7 @@ truma_inetx:
 climate:
   - platform: truma_inetx
     truma_inetx_id: aventa
-    name: "Aventa"         # modes, consigne, température, Confort/Boost : valeurs Aventa par défaut
+    name: "Aventa"         # modes, consigne, ventilation, température : valeurs Aventa par défaut
 
 button:
   - platform: truma_inetx
@@ -93,7 +92,7 @@ button:
     name: "Aventa appairer"
 ```
 
-L'exemple complet, avec ventilation, état de connexion, horloge et bouton « oublier
+L'exemple complet, avec état de connexion, horloge et bouton « oublier
 l'appairage », est dans [examples/aventa-component.yaml](examples/aventa-component.yaml).
 
 ### Option B – package clé en main
@@ -173,18 +172,27 @@ alors la clim par son nom.
 
 ## Étalonnage avec la télécommande d'origine
 
-Les valeurs des modes viennent du protocole iNet X. Il faut les confirmer sur l'Aventa : la
-télécommande d'origine sert de référence.
+Les valeurs par défaut ont été relevées sur une Aventa compact 2e génération (logiciel 1.6).
+Pour un autre modèle ou une autre version, la télécommande d'origine sert de référence.
+
+**Comment l'Aventa s'organise.** Elle contient deux équipements iNet X :
+- `0x0101` « iNet X Interface AC » : le mode (`RoomClimate.Mode`) et la consigne du mode auto
+  (`RoomClimate.TgtTemp`) ;
+- `0x0801` le climatiseur : consigne et vitesse de ventilation **du mode actif**,
+  `AirCooling.TgtTemp` / `AirCooling.Mode` en froid, `AirHeating.TgtTemp` / `AirHeating.Mode` en
+  chauffage, `AirCirculation.FanLevel` en ventilation. C'est là qu'écrit la télécommande.
+
+L'entité climatisation lit et écrit donc les paramètres du mode en cours, comme la télécommande.
 
 1. Une fois connecté, les logs listent chaque paramètre découvert :
    ```
-   [truma_inetx] New parameter RoomClimate.Mode = 2 (from 0x0202)
-   [truma_inetx] [0x0202] AirCooling.Mode = 0 min=0 max=1 enum=[{"n":"COMFORT",...},{"n":"FAST",...}]
+   [truma_inetx] New parameter RoomClimate.Mode = 2 (from 0x0101)
+   [truma_inetx] [0x0801] AirCooling.Mode = 0 enum=[{"n":"Auto","v":0},{"n":"Low","v":1},...]
    ```
-2. Changez le mode, la consigne et la ventilation **avec la télécommande**, y compris la
-   ventilation automatique. Chaque changement s'affiche, par exemple `RoomClimate.Mode: 0 -> 2`
-   ou `AirCirculation.FanLevel: 4 -> 0`. Une valeur sans correspondance est signalée
-   (`... has no fan mode: add it under fan_mode_parameter.values`).
+2. Changez le mode, la consigne et la ventilation **avec la télécommande**. Chaque changement
+   s'affiche, par exemple `RoomClimate.Mode: 0 -> 2` ou `AirCooling.TgtTemp: 220 -> 230`. Une
+   valeur sans correspondance est signalée une fois
+   (`... has no fan mode mapping: add it in the climate configuration`).
 3. Si une valeur diffère, corrigez-la dans votre YAML. Avec l'option A, directement dans votre
    entité `climate`. Avec l'option B, sans toucher au package :
    ```yaml
@@ -224,12 +232,12 @@ l'interrupteur **« connexion Bluetooth »**.
   select:
     - platform: truma_inetx
       truma_inetx_id: truma
-      name: "Aventa mode de refroidissement"
-      topic: AirCooling
-      parameter: Mode
+      name: "Aventa éclairage"
+      topic: AmbientLight
+      parameter: Active
       options:
-        0: "Confort"
-        1: "Rapide"
+        0: "Éteint"
+        1: "Allumé"
   ```
 - **Écrire un paramètre depuis Home Assistant** : allez dans Outils de développement > Actions,
   choisissez `ESPHome: <nœud>_truma_write`, puis renseignez `topic`, `parameter` et `value`. Cette
@@ -262,15 +270,16 @@ La procédure de capture avec un sniffer nRF et Wireshark est dans
 | `user_name` | `ESPHome` | nom présenté à la clim (comme un téléphone) |
 | `muid` / `uuid` | dérivés du nom du nœud | identité stable exigée par la clim. Ne la changez pas après l'appairage |
 | `topics` | les 33 topics de l'app | topics auxquels s'abonner |
-| `discovery_addresses` | `0x0101, 0x0201, 0x0202` | équipements interrogés au démarrage. Les adresses vues ensuite sont ajoutées automatiquement |
+| `discovery_addresses` | `0x0101, 0x0801` | équipements interrogés au démarrage. Les adresses vues ensuite sont ajoutées automatiquement |
 | `default_destination` | `0x0101` | destination des écritures tant qu'aucune adresse n'est apprise |
-| `destinations` | — | forcer une destination par topic, ex. `RoomClimate: 0x0202` |
+| `destinations` | — | forcer une destination par topic, ex. `AirCooling: 0x0801` |
 | `optimistic` | `true` | met à jour Home Assistant dès l'envoi, sans attendre la confirmation de la clim |
 | `remember_address` | `true` | mémorise l'adresse stable après appairage (voir RPA) |
 | `device_name` | — | suit la clim par son nom publié si elle change d'adresse sans bonding |
 | `log_advertisements` | `true` | journalise les appareils Truma entendus |
 | `log_frames` | `false` | journalise chaque trame décodée |
 | `frame_delay` | `100ms` | délai minimal entre deux messages |
+| `poll_interval` | `60s` | relit périodiquement tous les paramètres (filet de sécurité si la clim ne signale pas d'elle-même un changement fait à la télécommande). `never` pour désactiver |
 
 ### Plateformes d'entités
 
@@ -282,24 +291,33 @@ elles prennent aussi `topic` et `parameter`.
   | Option | Défaut |
   |---|---|
   | `mode_parameter` | `RoomClimate.Mode` : `OFF` 0, `AUTO` 1, `COOL` 2, `HEAT` 4, `FAN_ONLY` 5, `DRY` 6 |
-  | `target_temperature_parameter` | `RoomClimate.TgtTemp` |
+  | `target_temperature_parameter` | `RoomClimate.TgtTemp` ; en `COOL` : `AirCooling.TgtTemp`, en `HEAT` : `AirHeating.TgtTemp` |
   | `current_temperature_parameter` | `AirCooling.Temp` |
-  | `preset_parameter` | `AirCooling.Mode` : `COMFORT` 0, `BOOST` 1 |
-  | `action_parameter` | `AirCooling.Active` : `OFF` 0, `COOLING` 1, `IDLE` 2 |
-  | `fan_mode_parameter` | `AirCirculation.FanLevel` : `AUTO` 0 (provisoire, à confirmer), puis les vitesses `"1"` à `"10"` |
+  | `fan_mode_parameter` | `AirCooling.Mode` : `AUTO` 0, `LOW` 1, `MEDIUM` 2, `HIGH` 3, `QUIET` 4 (Nuit) ; en `HEAT` : `AirHeating.Mode` ; en `FAN_ONLY` : `AirCirculation.FanLevel` (`LOW` 1, `MEDIUM` 2, `HIGH` 3) |
+  | `action_parameter` | `AirCooling.Active` (refroidit), `AirHeating.Active` (chauffe), `AirDehumid.Active` (déshumidifie) |
+  | `preset_parameter` | aucun |
   | `temperature_multiplier` | 0.1 (l'iNet X compte en dixièmes de degré) |
 
-  Chaque `*_parameter` prend `topic`, `parameter` et `values` (mode Home Assistant → valeur
-  iNet X). La valeur `false` désactive un paramètre optionnel. Dans `fan_mode_parameter.values`,
-  les noms standard (`AUTO`, `LOW`, `MEDIUM`, `HIGH`, `QUIET`…) sont traduits par Home Assistant ;
-  tout autre nom (ex. `"Nuit"`, `"5"`) est affiché tel quel :
+  Chaque `*_parameter` prend `topic` et `parameter`, et `values` (valeur Home Assistant → valeur
+  iNet X) quand il y a une correspondance. `per_mode` remplace le paramètre (et éventuellement
+  les valeurs) pour un mode donné :
   ```yaml
   fan_mode_parameter:
-    values: {AUTO: 0, LOW: 3, MEDIUM: 6, HIGH: 10, "Nuit": 1}
+    topic: AirCooling
+    parameter: Mode
+    values: {AUTO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, "Nuit": 4}
+    per_mode:
+      HEAT: {topic: AirHeating, parameter: Mode}       # mêmes valeurs
+      FAN_ONLY:
+        topic: AirCirculation
+        parameter: FanLevel
+        values: {LOW: 1, MEDIUM: 2, HIGH: 3}
   ```
-  `custom_fan_modes: false` masque les noms personnalisés et ne garde que les modes standard
-  (avec les valeurs par défaut : seulement `Auto`). `fan_mode_parameter: false` retire toute la
-  ventilation de l'entité climatisation.
+  Les noms de vitesse standard (`AUTO`, `LOW`, `MEDIUM`, `HIGH`, `QUIET`…) sont traduits par
+  Home Assistant ; tout autre nom (ex. `"Nuit"`) est affiché tel quel. `custom_fan_modes: false`
+  masque ces noms personnalisés. La valeur `false` désactive un paramètre optionnel
+  (`fan_mode_parameter: false` retire la ventilation de l'entité). `action_parameter` accepte une
+  source ou une liste : la première qui indique une action en cours l'emporte.
 - `button` : `type` parmi `pair` (premier appairage), `forget_pairing` (supprime le bond et
   l'adresse mémorisée), `refresh` (relit tous les paramètres), `dump_parameters` (les journalise).
 - `sensor` / `number` : `multiplier`. `number` prend aussi `min_value`, `max_value` et `step`.

@@ -83,6 +83,8 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void set_optimistic(bool optimistic) { this->optimistic_ = optimistic; }
   void set_log_frames(bool log_frames) { this->log_frames_ = log_frames; }
   void set_frame_delay(uint32_t ms) { this->frame_delay_ = ms; }
+  /// Re-read every parameter periodically (0 = never), in case the device does not push changes.
+  void set_poll_interval(uint32_t ms) { this->poll_interval_ = ms; }
   void set_device_name(const std::string &name) { this->device_name_ = name; }
   void set_remember_address(bool remember) { this->remember_address_ = remember; }
   void set_log_advertisements(bool log) { this->log_advertisements_ = log; }
@@ -171,7 +173,8 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void handle_info_(uint16_t source, const cbor::Value &value);
   void handle_discovery_response_(uint16_t source, const cbor::Value &value);
   void update_param_(uint16_t source, const std::string &topic, const std::string &param, const cbor::Value &value,
-                     bool from_device);
+                     bool from_device, const char *via = "push");
+  void poll_();
   uint16_t resolve_destination_(const std::string &topic) const;
   void log_frame_(const char *direction, const uint8_t *data, size_t len);
 
@@ -202,6 +205,7 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   bool optimistic_{true};
   bool log_frames_{false};
   uint32_t frame_delay_{100};
+  uint32_t poll_interval_{60000};
   std::string device_name_;
   bool remember_address_{true};
   bool log_advertisements_{true};

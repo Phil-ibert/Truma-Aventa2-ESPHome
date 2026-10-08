@@ -57,27 +57,12 @@ climate:
     id: truma_climate
     truma_inetx_id: truma
     name: "${aventa_name}"
-    # Valeurs iNet X (à confirmer dans les logs en utilisant la télécommande) :
-    # RoomClimate.Mode 0=arrêt 1=auto 2=froid 3=chauffage 4=chauffage clim 5=ventilation 6=déshumidification
-    mode_parameter:
-      topic: RoomClimate
-      parameter: Mode
-      values:
-        "OFF": 0
-        AUTO: 1
-        COOL: 2
-        HEAT: 4
-        FAN_ONLY: 5
-        DRY: 6
-    # consigne (RoomClimate.TgtTemp), température (AirCooling.Temp), préréglages
-    # Confort/Boost (AirCooling.Mode), action (AirCooling.Active) et ventilation
-    # Auto + "1".."10" (AirCirculation.FanLevel) : valeurs par défaut du composant
-    visual:
-      min_temperature: 16
-      max_temperature: 30
-      temperature_step:
-        target_temperature: 0.5
-        current_temperature: 0.1
+    # Valeurs par défaut du composant, relevées sur une Aventa 2 :
+    # - modes : RoomClimate.Mode (arrêt, ACC/auto, froid, chauffage, ventilation, déshumidification)
+    # - consigne et ventilation du mode actif, comme la télécommande :
+    #   froid -> AirCooling.TgtTemp / AirCooling.Mode, chauffage -> AirHeating.TgtTemp / AirHeating.Mode,
+    #   auto -> RoomClimate.TgtTemp, ventilation -> AirCirculation.FanLevel
+    # - vitesses : Auto, Low, Medium, High, Quiet (= Nuit)
 
 sensor:
   - platform: truma_inetx
@@ -90,18 +75,6 @@ sensor:
     device_class: temperature
     state_class: measurement
     accuracy_decimals: 1
-
-number:
-  - platform: truma_inetx
-    truma_inetx_id: truma
-    name: "${aventa_name} ventilation"
-    topic: AirCirculation
-    parameter: FanLevel
-    min_value: 0
-    max_value: 10
-    step: 1
-    mode: slider
-    icon: mdi:fan
 
 binary_sensor:
   - platform: truma_inetx

@@ -11,7 +11,7 @@ import esphome.codegen as cg
 from esphome.components import ble_client, esp32_ble_tracker
 from esphome.components import time as time_
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_TIME_ID
+from esphome.const import CONF_ID, CONF_TIME_ID, SCHEDULER_DONT_RUN
 from esphome.core import CORE
 
 DEPENDENCIES = ["ble_client", "esp32_ble_tracker"]
@@ -37,6 +37,7 @@ CONF_FRAME_DELAY = "frame_delay"
 CONF_DEVICE_NAME = "device_name"
 CONF_REMEMBER_ADDRESS = "remember_address"
 CONF_LOG_ADVERTISEMENTS = "log_advertisements"
+CONF_POLL_INTERVAL = "poll_interval"
 
 truma_inetx_ns = cg.esphome_ns.namespace("truma_inetx")
 TrumaInetX = truma_inetx_ns.class_(
@@ -83,9 +84,10 @@ DEFAULT_TOPICS = [
     "PowerMgmt",
 ]
 
-# 0x0101 = panel, 0x0201 = TIN master #1, 0x0202 = Aventa on the TIN bus.
-# Unknown addresses are harmless; addresses seen in INFO messages are added automatically.
-DEFAULT_DISCOVERY_ADDRESSES = [0x0101, 0x0201, 0x0202]
+# Aventa 2 (observed): 0x0101 = built-in "iNet X Interface AC", 0x0801 = the air conditioner.
+# (iNet X panel setups use 0x0101 = panel, 0x0201 = heater.) Addresses seen in INFO messages
+# are queried automatically, so this list only speeds up the first connection.
+DEFAULT_DISCOVERY_ADDRESSES = [0x0101, 0x0801]
 
 # Stable namespace so that the generated identity never changes for a given device name.
 IDENTITY_NAMESPACE = uuid.UUID("6f0b6c3e-2d1a-4b8e-9c55-7d3f0e2a9b41")
@@ -140,6 +142,9 @@ CONFIG_SCHEMA = (
             # Fallback for a device changing address without bonding: follow its name.
             cv.Optional(CONF_DEVICE_NAME): cv.string_strict,
             cv.Optional(CONF_LOG_ADVERTISEMENTS, default=True): cv.boolean,
+            # Re-read every parameter periodically, in case the device does not push changes
+            # made with its remote ("never" to disable).
+            cv.Optional(CONF_POLL_INTERVAL, default="60s"): cv.update_interval,
         }
     )
     .extend(ble_client.BLE_CLIENT_SCHEMA)
@@ -200,5 +205,7 @@ async def to_code(config):
     cg.add(var.set_frame_delay(config[CONF_FRAME_DELAY].total_milliseconds))
     cg.add(var.set_remember_address(config[CONF_REMEMBER_ADDRESS]))
     cg.add(var.set_log_advertisements(config[CONF_LOG_ADVERTISEMENTS]))
+    poll_ms = config[CONF_POLL_INTERVAL].total_milliseconds
+    cg.add(var.set_poll_interval(0 if poll_ms >= SCHEDULER_DONT_RUN else poll_ms))
     if CONF_DEVICE_NAME in config:
         cg.add(var.set_device_name(config[CONF_DEVICE_NAME]))

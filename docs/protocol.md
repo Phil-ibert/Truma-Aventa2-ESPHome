@@ -77,8 +77,8 @@ paramètres, `82`/`84` réponses correspondantes.
 
 **Adresses internes.** Sur un panneau iNet X : `0x0101` (panneau), `0x0201` (chauffage sur le bus
 TIN), `0x0202` (Aventa sur le bus TIN).
-⚠️ Sur une Aventa seule, les adresses sont inconnues. Le composant envoie chaque écriture à
-l'adresse qui publie le topic concerné. Il apprend ces adresses dans les messages INFO et interroge
+Sur une Aventa seule : `0x0101` et `0x0801` (voir la section 6). Le composant envoie chaque
+écriture à l'adresse qui publie le topic concerné. Il apprend ces adresses dans les messages INFO et interroge
 automatiquement tout nouvel équipement.
 
 ## 5. Topics utiles pour la climatisation
@@ -95,5 +95,44 @@ Les températures sont en **dixièmes de °C**.
 | `AirCirculation.FanLevel` | niveau de ventilation |
 | `AirHeating.*` | chauffage (pompe à chaleur de l'Aventa ou Combi) |
 
-⚠️ Sur l'Aventa, les combinaisons exactes (mode « chauffage » = 3 ou 4 ? ventilation par
+Voir la section 6 pour les combinaisons relevées sur l'Aventa.
 `RoomClimate` ou `AirCirculation` ?) se lisent dans les logs en utilisant la télécommande.
+
+## 6. Aventa compact 2e génération : modèle observé
+
+Relevé sur une Aventa compact 2. G (logiciel climatiseur 1.6, interface 3.3), sans panneau
+iNet X, avec sa télécommande Bluetooth.
+
+**Équipements** (adresse iNet X → rôle) :
+
+| Adresse | Nom (`Identify.Name`) | Topics utiles |
+|---|---|---|
+| `0x0101` | iNet X Interface AC | `RoomClimate` (Mode, TgtTemp, Active), `Temperature.Internal`, `TimerConfig`, `System` |
+| `0x0801` | Aventa compact 2. G | `AirCooling`, `AirHeating`, `AirCirculation`, `AirDehumid`, `AmbientLight`, `ACCAirCooling`, `ACCAirHeating` |
+| `0x0601` | gestion Bluetooth | `BleDeviceManagement` |
+| `0x0602` | Aventa Remote Control | `BluetoothDevice` (adresse, batterie, signal), `BleRemoteControl` |
+
+Les adresses `0x0201` / `0x0202` (panneau + Combi) ne répondent pas. L'ESP32 reçoit l'adresse
+`0x0500` à l'enregistrement.
+
+**Énumérations** (annoncées par l'Aventa elle-même) :
+
+| Paramètre | Valeurs |
+|---|---|
+| `RoomClimate.Mode` | Off 0, ACC 1, Cooling 2, HeatingAC 4, Ventilating 5, Dehumidifying 6 |
+| `AirCooling.Mode`, `AirHeating.Mode` (vitesse de ventilation) | Auto 0, Low 1, Mid 2, High 3, Night 4 |
+| `AirCirculation.FanLevel` | 0 à 3 |
+| `AirCooling.Active`, `AirHeating.Active` | 0 arrêt, 1 en marche, 2 en veille de régulation |
+| `*.TgtTemp` | 160 à 300 (16,0 à 30,0 °C) |
+| `AmbientLight.LightStep` | 0 à 100 |
+
+**Ce que fait la télécommande** (messages INFO poussés à tous les abonnés) :
+- changement de mode → `RoomClimate.Mode` sur `0x0101` ;
+- consigne → `AirCooling.TgtTemp` en froid, `AirHeating.TgtTemp` en chauffage (`0x0801`) ;
+  en ACC, `RoomClimate.TgtTemp` ;
+- vitesse de ventilation → `AirCooling.Mode` en froid, `AirHeating.Mode` en chauffage ;
+- éclairage d'ambiance → `AmbientLight.Active` / `LightStep`.
+
+**Écritures** : `RoomClimate.TgtTemp` est acceptée mais n'agit pas sur la consigne en froid ou en
+chauffage. Il faut écrire le paramètre du mode actif sur `0x0801`, comme la télécommande.
+`AirCirculation.FanLevel` refuse les valeurs hors de 0 à 3.

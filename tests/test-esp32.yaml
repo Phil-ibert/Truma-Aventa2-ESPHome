@@ -43,6 +43,7 @@ packages:
 truma_inetx:
   - id: !extend truma
     device_name: "Aventa"
+    poll_interval: 30s
     discovery_addresses: [0x0101, 0x0202]
     destinations:
       RoomClimate: 0x0202
@@ -106,11 +107,34 @@ climate:
         MEDIUM: 5
         HIGH: 10
         "Silence": 1
-  # default fan mapping with the custom levels hidden (Auto only)
+  # explicit per-mode setpoint / fan, single action source, custom fan labels
   - platform: truma_inetx
     truma_inetx_id: truma
-    name: "Aventa auto fan only"
-    custom_fan_modes: false
+    name: "Aventa per mode"
+    custom_fan_modes: true
+    target_temperature_parameter:
+      topic: RoomClimate
+      parameter: TgtTemp
+      per_mode:
+        COOL: {topic: AirCooling, parameter: TgtTemp}
+    fan_mode_parameter:
+      topic: AirCooling
+      parameter: Mode
+      values: {AUTO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, "Nuit": 4}
+      per_mode:
+        HEAT: {topic: AirHeating, parameter: Mode}
+        FAN_ONLY:
+          topic: AirCirculation
+          parameter: FanLevel
+          values: {LOW: 1, MEDIUM: 2, HIGH: 3, "Turbo": 0}
+    action_parameter:
+      topic: AirCooling
+      parameter: Active
+      values: {COOLING: 1, IDLE: 2}
+    preset_parameter:
+      topic: AirCooling
+      parameter: Mode
+      values: {COMFORT: 0, BOOST: 3}
 
 button:
   - platform: truma_inetx

@@ -105,6 +105,8 @@ const char *session_state_to_string(SessionState state) {
 
 void TrumaInetX::setup() {
   this->reset_session_();
+  if (this->poll_interval_ > 0)
+    this->set_interval("poll", this->poll_interval_, [this]() { this->poll_(); });
   this->configured_address_ = this->parent()->get_address();
   this->address_pref_ = global_preferences->make_preference<StoredAddress>(fnv1_hash("truma_inetx_address"), true);
   if (!this->remember_address_)
@@ -136,6 +138,11 @@ void TrumaInetX::dump_config() {
   ESP_LOGCONFIG(TAG, "  Frame logging: %s, advertisement logging: %s", YESNO(this->log_frames_),
                 YESNO(this->log_advertisements_));
   ESP_LOGCONFIG(TAG, "  Remember bonded address: %s", YESNO(this->remember_address_));
+  if (this->poll_interval_ > 0) {
+    ESP_LOGCONFIG(TAG, "  Poll interval: %u s", (unsigned) (this->poll_interval_ / 1000));
+  } else {
+    ESP_LOGCONFIG(TAG, "  Poll interval: never");
+  }
   if (!this->device_name_.empty())
     ESP_LOGCONFIG(TAG, "  Follow device name: '%s'", this->device_name_.c_str());
   ESP_LOGCONFIG(TAG, "  Session state: %s", session_state_to_string(this->state_));
@@ -937,6 +944,20 @@ void TrumaInetX::refresh() {
     this->queue_param_discovery_(address);
 }
 
+void TrumaInetX::poll_() {
+  if (this->state_ != SessionState::READY || !this->tx_queue_.empty() || this->tx_state_ != TxState::IDLE)
+    return;
+  // Ask only the devices that actually reported parameters; fall back to the configured list.
+  std::set<uint16_t> addresses;
+  for (const auto &it : this->learned_destinations_)
+    addresses.insert(it.second);
+  if (addresses.empty())
+    addresses.insert(this->discovery_addresses_.begin(), this->discovery_addresses_.end());
+  ESP_LOGV(TAG, "Polling %u device(s)", (unsigned) addresses.size());
+  for (uint16_t address : addresses)
+    this->queue_frame_(build_param_discovery(this->assigned_addr_, address), DISCOVERY_DELAY_MS);
+}
+
 void TrumaInetX::handle_frame_(const Frame &frame) {
   switch (frame.control) {
     case CTRL_REGISTRATION: {
@@ -1048,16 +1069,22 @@ void TrumaInetX::handle_discovery_response_(uint16_t source, const cbor::Value &
       if (const auto *en = p.get("enum"))
         meta += " enum=" + en->to_string(200);
       const cbor::Value *v = p.get("v");
-      ESP_LOGI(TAG, "[0x%04X] %s.%s = %s%s", source, tn->str.c_str(), pn->str.c_str(),
-               v != nullptr ? v->to_string(64).c_str() : "?", meta.c_str());
+      const bool known = this->params_.count(tn->str + "." + pn->str) > 0;
+      if (!known) {
+        ESP_LOGI(TAG, "[0x%04X] %s.%s = %s%s", source, tn->str.c_str(), pn->str.c_str(),
+                 v != nullptr ? v->to_string(64).c_str() : "?", meta.c_str());
+      } else {
+        ESP_LOGV(TAG, "[0x%04X] %s.%s = %s%s", source, tn->str.c_str(), pn->str.c_str(),
+                 v != nullptr ? v->to_string(64).c_str() : "?", meta.c_str());
+      }
       if (v != nullptr)
-        this->update_param_(source, tn->str, pn->str, *v, true);
+        this->update_param_(source, tn->str, pn->str, *v, true, "poll");
     }
   }
 }
 
 void TrumaInetX::update_param_(uint16_t source, const std::string &topic, const std::string &param,
-                               const cbor::Value &value, bool from_device) {
+                               const cbor::Value &value, bool from_device, const char *via) {
   if (from_device && source != ADDR_MESSAGE_BROKER && source != ADDR_BROADCAST && source != this->assigned_addr_) {
     this->learned_destinations_[topic] = source;
     if (this->auto_discovery_ && !this->probed_addresses_.count(source) &&
@@ -1075,8 +1102,13 @@ void TrumaInetX::update_param_(uint16_t source, const std::string &topic, const 
   } else {
     std::string old_str = it->second.value.to_string(64);
     std::string new_str = value.to_string(64);
-    if (old_str != new_str)
-      ESP_LOGD(TAG, "%s: %s -> %s (from 0x%04X)", key.c_str(), old_str.c_str(), new_str.c_str(), source);
+    if (old_str != new_str) {
+      if (from_device) {
+        ESP_LOGI(TAG, "%s: %s -> %s (from 0x%04X, %s)", key.c_str(), old_str.c_str(), new_str.c_str(), source, via);
+      } else {
+        ESP_LOGD(TAG, "%s: %s -> %s (sent)", key.c_str(), old_str.c_str(), new_str.c_str());
+      }
+    }
     it->second.value = value;
     if (from_device)
       it->second.source = source;
