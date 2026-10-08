@@ -194,7 +194,8 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void remember_bond_(const uint8_t *peer);
   void store_address_(uint64_t address);
   void apply_tx_power_();
-  /// Set the unit's clock (SystemTime) from the time source, if any.
+  /// Set the unit's clock from the time source, if any (new round, remembered way first).
+  void start_clock_sync_();
   void send_clock_();
   /// Compare the clock shown by the unit (TimeAndDate.Time) with the local time after setting it.
   void check_clock_(const cbor::Value &value);
@@ -281,7 +282,13 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   bool clock_sent_{false};
   uint32_t clock_sent_at_{0};
   bool clock_check_pending_{false};
-  uint8_t clock_mismatches_{0};
+  uint8_t clock_method_{0};    // way of setting the clock currently used (see CLOCK_METHODS)
+  uint8_t clock_attempts_{0};  // ways tried in the current round
+  struct ClockPref {
+    uint32_t magic;
+    uint8_t method;
+  };
+  ESPPreferenceObject clock_pref_;
 };
 
 }  // namespace truma_inetx

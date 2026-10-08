@@ -84,6 +84,42 @@ std::vector<uint8_t> build_subscribe(uint16_t src, const std::vector<std::string
   return build_frame(ADDR_MESSAGE_BROKER, src, CTRL_MBP, MBP_SUBSCRIBE, 0, payload);
 }
 
+std::vector<uint8_t> build_system_time_topics(uint16_t src, uint16_t dest, int64_t time, int64_t lot) {
+  std::vector<uint8_t> payload;
+  cbor::Encoder enc(payload);
+  enc.map(2);
+  enc.text("avail");
+  enc.integer(1);
+  enc.text("topics");
+  enc.array(1);
+  enc.map(3);
+  enc.text("tn");
+  enc.text("SystemTime");
+  enc.text("id");
+  enc.integer(0);
+  enc.text("parameters");
+  enc.array(2);
+  const struct {
+    const char *name;
+    int64_t value;
+    int64_t type;
+  } params[2] = {{"Time", time, 18}, {"Lot", lot, 1}};
+  for (const auto &p : params) {
+    enc.map(5);
+    enc.text("v");
+    enc.integer(p.value);
+    enc.text("id");
+    enc.integer(0);
+    enc.text("type");
+    enc.integer(p.type);
+    enc.text("pn");
+    enc.text(p.name);
+    enc.text("tn");
+    enc.text("SystemTime");
+  }
+  return build_frame(dest, src, CTRL_MBP, MBP_WRITE, 0, payload);
+}
+
 std::vector<uint8_t> build_write(uint16_t src, uint16_t dest, const std::string &topic, const std::string &param,
                                  const cbor::Value &value) {
   std::vector<uint8_t> payload;

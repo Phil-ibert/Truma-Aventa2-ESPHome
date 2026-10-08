@@ -118,6 +118,11 @@ std::vector<uint8_t> build_registration(uint16_t src);
 std::vector<uint8_t> build_subscribe(uint16_t src, const std::vector<std::string> &topics);
 
 /// Parameter write: {"tn": topic, "pn": param, "v": value, "id": 0}.
+/// SystemTime in the "topics" layout the official app uses for its own values:
+/// {"avail":1,"topics":[{"tn":"SystemTime","id":0,"parameters":[{"v":time,"id":0,"type":18,...},
+/// {"v":lot,"id":0,"type":1,...}]}]}
+std::vector<uint8_t> build_system_time_topics(uint16_t src, uint16_t dest, int64_t time, int64_t lot);
+
 std::vector<uint8_t> build_write(uint16_t src, uint16_t dest, const std::string &topic, const std::string &param,
                                  const cbor::Value &value);
 

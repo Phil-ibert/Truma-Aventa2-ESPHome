@@ -139,6 +139,11 @@ chauffage. Il faut écrire le paramètre du mode actif sur `0x0801`, comme la t�
 
 **Horloge** : l'interface `0x0101` affiche son horloge dans `TimeAndDate.Time` (`"HH:MM"`) et
 `TimeAndDate.Date` (`"JJ.MM.AA"`), en lecture seule (`perm: 0`). Sans mise à l'heure, elle compte
-depuis la mise sous tension (`10.03.00` observé). Le composant envoie `SystemTime.Time` (secondes
-depuis 1970, en heure locale) et `SystemTime.Lot` = 0, comme l'app officielle, puis vérifie
-`TimeAndDate.Time` à la relecture suivante.
+depuis la mise sous tension (`10.03.00` observé). Les écritures `SystemTime.Time`/`Lot` des
+captures de l'app (installation avec panneau iNet X) sont ignorées par cette interface. Le
+composant essaie donc trois façons, vérifie chacune en relisant `TimeAndDate.Time`, et mémorise
+celle qui marche :
+1. écritures simples `SystemTime.Time` (secondes depuis 1970, heure locale) et `SystemTime.Lot` = 0 ;
+2. le même `SystemTime` dans la structure `{"avail":1,"topics":[{"tn":"SystemTime","parameters":[…]}]}`
+   de l'app (types 18 et 1) ;
+3. écritures directes `TimeAndDate.Date` (`"JJ.MM.AA"`) et `TimeAndDate.Time` (`"HH:MM"`).

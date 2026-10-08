@@ -197,6 +197,15 @@ static void test_decoder_errors() {
   CHECK(!cbor::decode(nullptr, 0, v));
 }
 
+static void test_system_time_topics() {
+  // Reference: cbor2 encoding of the official app's SystemTime message (truma-inetx-ble)
+  auto frame = build_system_time_topics(0x0501, 0x0101, 1791496800, 0);
+  CHECK(frame == unhex("010101058500030000000000000000000100a265617661696c0166746f7069637381a362746e6a53797374656d54"
+                       "696d65626964006a706172616d657465727382a561761a6ac812606269640064747970651262706e6454696d6562"
+                       "746e6a53797374656d54696d65a56176006269640064747970650162706e634c6f7462746e6a53797374656d5469"
+                       "6d65"));
+}
+
 static void test_decoder_memory() {
   cbor::Value v;
   cbor::DecodeInfo info;
@@ -326,6 +335,7 @@ int main() {
   test_decoder_types();
   test_decoder_errors();
   test_decoder_memory();
+  test_system_time_topics();
   test_encoder_roundtrip();
   test_fuzz();
   std::printf("%d checks, %d failures\n", checks, failures);

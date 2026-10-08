@@ -32,6 +32,12 @@ static const uint32_t IDENTITY_DELAY_MS = 300;
 static const uint32_t CLOCK_CHECK_INTERVAL_MS = 60000;
 static const uint32_t CLOCK_RESYNC_MS = 24UL * 3600UL * 1000UL;  // the unit's clock drifts: resend daily
 static const uint32_t CLOCK_READ_DELAY_MS = 10000;  // ignore clock readings older than our write
+// The way the unit accepts its clock depends on the installation: an iNet X panel takes the
+// SystemTime writes of the official app, the Aventa's built-in interface ignores them. Each way is
+// tried in turn and checked by reading TimeAndDate.Time back; the one that works is remembered.
+static const char *const CLOCK_METHODS[] = {"SystemTime", "SystemTime (app layout)", "TimeAndDate"};
+static const uint8_t CLOCK_METHOD_COUNT = 3;
+static const uint32_t CLOCK_PREF_MAGIC = 0x54524B43;  // "TRKC"
 static const uint32_t DISCOVERY_DELAY_MS = 1000;
 static const size_t MAX_TOPICS_PER_SUBSCRIBE = 10;
 static const size_t MAX_FRAME_SIZE = 4096;
@@ -136,8 +142,12 @@ void TrumaInetX::setup() {
     this->set_interval("clock", CLOCK_CHECK_INTERVAL_MS, [this]() {
       if (this->state_ == SessionState::READY &&
           (!this->clock_sent_ || millis() - this->clock_sent_at_ > CLOCK_RESYNC_MS))
-        this->send_clock_();
+        this->start_clock_sync_();
     });
+    this->clock_pref_ = global_preferences->make_preference<ClockPref>(fnv1_hash("truma_inetx_clock"), true);
+    ClockPref stored{};
+    if (this->clock_pref_.load(&stored) && stored.magic == CLOCK_PREF_MAGIC && stored.method < CLOCK_METHOD_COUNT)
+      this->clock_method_ = stored.method;
     // The unit shows its clock in TimeAndDate.Time ("HH:MM"): check that setting it worked.
     this->register_listener("TimeAndDate", "Time", [this](const cbor::Value &value) { this->check_clock_(value); });
   }
@@ -291,7 +301,7 @@ void TrumaInetX::reset_session_() {
   this->recent_writes_.clear();
   this->clock_sent_ = false;
   this->clock_check_pending_ = false;
-  this->clock_mismatches_ = 0;
+  this->clock_attempts_ = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -709,52 +719,94 @@ void TrumaInetX::on_connection_failed_(int status) {
   }
 }
 
+void TrumaInetX::start_clock_sync_() {
+#ifdef USE_TIME
+  if (this->time_ == nullptr || !this->time_->now().is_valid())
+    return;  // retried every minute until the time source is synchronized
+  this->clock_attempts_ = 0;
+  this->send_clock_();
+#endif
+}
+
 void TrumaInetX::send_clock_() {
 #ifdef USE_TIME
-  if (this->time_ == nullptr)
-    return;
   auto now = this->time_->now();
   if (!now.is_valid())
-    return;  // retried every minute until the time source is synchronized
-  // Local time, with a zero offset (Lot) like the official app: the unit displays it as is.
-  const int64_t local = static_cast<int64_t>(now.timestamp) + ESPTime::timezone_offset();
-  const uint16_t dest = this->resolve_destination_("SystemTime");
-  this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Time", cbor::Value::make_int(local)),
-                     IDENTITY_DELAY_MS);
-  this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Lot", cbor::Value::make_int(0)),
-                     IDENTITY_DELAY_MS);
+    return;
+  const uint8_t method = this->clock_method_;
+  if (method < 2) {
+    // Local time with a zero offset (Lot), like the official app: the unit displays it as is.
+    const int64_t local = static_cast<int64_t>(now.timestamp) + ESPTime::timezone_offset();
+    const uint16_t dest = this->resolve_destination_("SystemTime");
+    if (method == 0) {
+      this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Time", cbor::Value::make_int(local)),
+                         IDENTITY_DELAY_MS);
+      this->queue_frame_(build_write(this->assigned_addr_, dest, "SystemTime", "Lot", cbor::Value::make_int(0)),
+                         IDENTITY_DELAY_MS);
+    } else {
+      this->queue_frame_(build_system_time_topics(this->assigned_addr_, dest, local, 0), IDENTITY_DELAY_MS);
+    }
+  } else {
+    char date[12], time[8];
+    snprintf(date, sizeof(date), "%02u.%02u.%02u", (unsigned) now.day_of_month, (unsigned) now.month,
+             (unsigned) (now.year % 100));
+    snprintf(time, sizeof(time), "%02u:%02u", (unsigned) now.hour, (unsigned) now.minute);
+    const uint16_t dest = this->resolve_destination_("TimeAndDate");
+    this->queue_frame_(build_write(this->assigned_addr_, dest, "TimeAndDate", "Date", cbor::Value::make_text(date)),
+                       IDENTITY_DELAY_MS);
+    this->queue_frame_(build_write(this->assigned_addr_, dest, "TimeAndDate", "Time", cbor::Value::make_text(time)),
+                       IDENTITY_DELAY_MS);
+  }
+  this->clock_attempts_++;
   this->clock_sent_ = true;
   this->clock_sent_at_ = millis();
   this->clock_check_pending_ = true;
-  this->clock_mismatches_ = 0;
-  ESP_LOGI(TAG, "Setting the unit's clock: %02u.%02u.%04u %02u:%02u", now.day_of_month, now.month, now.year,
-           now.hour, now.minute);
+  ESP_LOGI(TAG, "Setting the unit's clock to %02u.%02u.%04u %02u:%02u (%s)", now.day_of_month, now.month, now.year,
+           now.hour, now.minute, CLOCK_METHODS[method]);
+  // Read the clock back without waiting for the next poll.
+  this->set_timeout("clock_read", CLOCK_READ_DELAY_MS + 2000, [this]() {
+    if (this->clock_check_pending_ && this->state_ == SessionState::READY)
+      this->queue_param_discovery_(this->resolve_destination_("TimeAndDate"));
+  });
 #endif
 }
 
 void TrumaInetX::check_clock_(const cbor::Value &value) {
 #ifdef USE_TIME
+  // Readings sent before our write was processed are ignored.
   if (!this->clock_check_pending_ || !value.is_text() || millis() - this->clock_sent_at_ < CLOCK_READ_DELAY_MS)
     return;
   auto now = this->time_->now();
   int hour, minute;
   if (!now.is_valid() || sscanf(value.str.c_str(), "%d:%d", &hour, &minute) != 2)
     return;
+  this->clock_check_pending_ = false;
   int diff = (hour * 60 + minute) - (now.hour * 60 + now.minute);
   diff = ((diff % 1440) + 1440) % 1440;
   if (diff > 720)
     diff -= 1440;
   if (std::abs(diff) <= 2) {
-    this->clock_check_pending_ = false;
-    ESP_LOGI(TAG, "The unit's clock is set: %s (local time %02u:%02u)", value.str.c_str(), now.hour, now.minute);
+    ESP_LOGI(TAG, "The unit's clock is set: %s (local time %02u:%02u, %s)", value.str.c_str(), now.hour, now.minute,
+             CLOCK_METHODS[this->clock_method_]);
+    ClockPref stored{};
+    if (!this->clock_pref_.load(&stored) || stored.magic != CLOCK_PREF_MAGIC || stored.method != this->clock_method_) {
+      ClockPref pref{CLOCK_PREF_MAGIC, this->clock_method_};
+      this->clock_pref_.save(&pref);
+    }
     return;
   }
-  // A reading may still predate our write: conclude on the second one.
-  if (++this->clock_mismatches_ < 2)
+  if (this->clock_attempts_ < CLOCK_METHOD_COUNT) {
+    const uint8_t next = (this->clock_method_ + 1) % CLOCK_METHOD_COUNT;
+    ESP_LOGI(TAG, "The unit's clock still shows %s (local time %02u:%02u): %s ignored, trying %s", value.str.c_str(),
+             now.hour, now.minute, CLOCK_METHODS[this->clock_method_], CLOCK_METHODS[next]);
+    this->clock_method_ = next;
+    this->send_clock_();
     return;
-  this->clock_check_pending_ = false;
-  ESP_LOGW(TAG, "The unit's clock shows %s instead of %02u:%02u (%+d min): setting it did not work, please report",
-           value.str.c_str(), now.hour, now.minute, diff);
+  }
+  ESP_LOGW(TAG,
+           "The unit's clock shows %s instead of %02u:%02u (%+d min): none of the %u ways to set it worked, "
+           "please report",
+           value.str.c_str(), now.hour, now.minute, diff, (unsigned) CLOCK_METHOD_COUNT);
 #endif
 }
 
@@ -1104,7 +1156,7 @@ void TrumaInetX::continue_initialisation_() {
   // 2. identity (the device remembers clients by Muid/Uuid)
   if (this->send_identity_) {
     uint16_t dest = this->resolve_destination_("MobileIdentity");
-    this->send_clock_();
+    this->start_clock_sync_();
     this->queue_frame_(build_write(this->assigned_addr_, dest, "MobileIdentity", "UserName",
                                    cbor::Value::make_text(this->user_name_)),
                        IDENTITY_DELAY_MS);
