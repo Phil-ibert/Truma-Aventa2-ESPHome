@@ -68,8 +68,29 @@ struct Value {
   }
 };
 
+/// Size of a decoded item, measured before decoding it.
+struct DecodeInfo {
+  size_t nodes{0};          // values in the tree
+  size_t heap{0};           // estimated heap used by the tree, in bytes
+  size_t largest_block{0};  // largest single allocation, in bytes
+  bool too_large{false};    // refused by DecodeLimits
+};
+
+/// Memory available for a decoded tree: decoding is refused beyond it instead of running out of
+/// memory (on the ESP32 a failed allocation aborts the firmware).
+struct DecodeLimits {
+  size_t max_heap;
+  size_t max_block;
+};
+
+/// Validate one CBOR item and measure what decoding it would allocate, without allocating.
+bool measure(const uint8_t *data, size_t len, DecodeInfo *info, size_t *consumed = nullptr);
+
 /// Decode one CBOR item. Returns true on success; `consumed` receives the number of bytes used.
-bool decode(const uint8_t *data, size_t len, Value &out, size_t *consumed = nullptr);
+/// Nothing is allocated for malformed or truncated data, or when `limits` would be exceeded
+/// (`info->too_large` is then set).
+bool decode(const uint8_t *data, size_t len, Value &out, size_t *consumed = nullptr,
+            const DecodeLimits *limits = nullptr, DecodeInfo *info = nullptr);
 
 /// Streaming encoder appending to a byte vector (definite lengths only, like the Truma app).
 class Encoder {

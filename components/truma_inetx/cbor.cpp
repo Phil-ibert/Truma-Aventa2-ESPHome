@@ -9,7 +9,7 @@ namespace truma_inetx {
 namespace cbor {
 
 static const int MAX_DEPTH = 16;
-static const size_t MAX_ITEMS = 4096;
+static const size_t MAX_ITEMS = 1024;  // per container
 
 // ---------------------------------------------------------------------------
 // Value helpers
@@ -151,9 +151,17 @@ std::string Value::to_string(size_t max_len) const {
 
 namespace {
 
+// Heap accounting of a decoded tree (approximate, on the safe side).
+static const size_t HEAP_BLOCK_OVERHEAD = 16;  // allocator header + alignment
+static const size_t STRING_SSO_CAPACITY = 15;  // libstdc++ keeps shorter strings inside std::string
+
+/// Used twice on the same bytes: in measuring mode (`measure` set) it walks the item without
+/// allocating anything, which validates it and estimates the memory needed; then it builds the
+/// tree with exact reservations, so containers never grow (no reallocation peaks).
 class Decoder {
  public:
-  Decoder(const uint8_t *data, size_t len) : data_(data), len_(len) {}
+  Decoder(const uint8_t *data, size_t len, size_t pos, DecodeInfo *measure)
+      : data_(data), len_(len), pos_(pos), measure_(measure) {}
 
   bool item(Value &out, int depth) {
     if (depth > MAX_DEPTH || this->pos_ >= this->len_)
@@ -161,6 +169,8 @@ class Decoder {
     uint8_t ib = this->data_[this->pos_++];
     uint8_t major = ib >> 5;
     uint8_t info = ib & 0x1F;
+    if (this->measure_ != nullptr && major != 6)
+      this->measure_->nodes++;
 
     if (major == 7)
       return this->simple_(info, out);
@@ -189,36 +199,27 @@ class Decoder {
         out.integer = -1 - static_cast<int64_t>(arg);
         return true;
       case 2:
-      case 3:
+      case 3: {
         out.type = major == 2 ? Type::BYTES : Type::TEXT;
         if (indefinite)
           return this->chunked_string_(major, out.str);
-        return this->read_bytes_(arg, out.str);
-      case 4: {
-        out.type = Type::ARRAY;
-        if (indefinite)
-          return this->indefinite_container_(out, depth, 1);
-        if (arg > MAX_ITEMS)
+        if (arg > this->len_ - this->pos_)
           return false;
-        out.items.resize(static_cast<size_t>(arg));
-        for (auto &child : out.items) {
-          if (!this->item(child, depth + 1))
-            return false;
-        }
+        const size_t n = static_cast<size_t>(arg);
+        this->account_string_(n);
+        this->read_bytes_(n, &out.str);
         return true;
       }
+      case 4:
       case 5: {
-        out.type = Type::MAP;
+        const size_t stride = major == 4 ? 1 : 2;
+        out.type = major == 4 ? Type::ARRAY : Type::MAP;
         if (indefinite)
-          return this->indefinite_container_(out, depth, 2);
-        if (arg > MAX_ITEMS)
+          return this->indefinite_container_(out, depth, stride);
+        // every item takes at least one byte: reject impossible counts before allocating
+        if (arg > MAX_ITEMS || arg * stride > this->len_ - this->pos_)
           return false;
-        out.items.resize(static_cast<size_t>(arg) * 2);
-        for (auto &child : out.items) {
-          if (!this->item(child, depth + 1))
-            return false;
-        }
-        return true;
+        return this->definite_container_(out, depth, static_cast<size_t>(arg) * stride);
       }
       case 6:  // tag: decode and keep the tagged item only
         return this->item(out, depth + 1);
@@ -230,6 +231,18 @@ class Decoder {
   size_t pos() const { return this->pos_; }
 
  protected:
+  void account_block_(size_t bytes) {
+    if (this->measure_ == nullptr || bytes == 0)
+      return;
+    this->measure_->heap += bytes + HEAP_BLOCK_OVERHEAD;
+    if (bytes > this->measure_->largest_block)
+      this->measure_->largest_block = bytes;
+  }
+  void account_string_(size_t length) {
+    if (length > STRING_SSO_CAPACITY)
+      this->account_block_(length + 1);
+  }
+
   bool argument_(uint8_t info, uint64_t &arg) {
     if (info < 24) {
       arg = info;
@@ -252,7 +265,7 @@ class Decoder {
       default:
         return false;
     }
-    if (this->pos_ + n > this->len_)
+    if (n > this->len_ - this->pos_)
       return false;
     arg = 0;
     for (size_t i = 0; i < n; i++)
@@ -260,48 +273,106 @@ class Decoder {
     return true;
   }
 
-  bool read_bytes_(uint64_t n, std::string &out) {
-    if (n > this->len_ - this->pos_)
-      return false;
-    out.append(reinterpret_cast<const char *>(this->data_ + this->pos_), static_cast<size_t>(n));
-    this->pos_ += static_cast<size_t>(n);
-    return true;
+  /// Consumes `n` bytes (checked by the caller); appends them to `out` unless measuring.
+  void read_bytes_(size_t n, std::string *out) {
+    if (this->measure_ == nullptr && out != nullptr)
+      out->append(reinterpret_cast<const char *>(this->data_ + this->pos_), n);
+    this->pos_ += n;
   }
 
-  bool chunked_string_(uint8_t major, std::string &out) {
+  /// Chunks of an indefinite-length string, up to its break. `total` receives the length.
+  bool chunks_(uint8_t major, std::string *out, size_t *total) {
+    *total = 0;
     while (true) {
       if (this->pos_ >= this->len_)
         return false;
-      uint8_t ib = this->data_[this->pos_];
-      if (ib == 0xFF) {
-        this->pos_++;
+      uint8_t ib = this->data_[this->pos_++];
+      if (ib == 0xFF)
         return true;
-      }
-      this->pos_++;
-      if ((ib >> 5) != major)
+      if ((ib >> 5) != major || (ib & 0x1F) == 31)
         return false;
       uint64_t n;
-      if ((ib & 0x1F) == 31 || !this->argument_(ib & 0x1F, n))
+      if (!this->argument_(ib & 0x1F, n) || n > this->len_ - this->pos_)
         return false;
-      if (!this->read_bytes_(n, out))
+      *total += static_cast<size_t>(n);
+      this->read_bytes_(static_cast<size_t>(n), out);
+    }
+  }
+
+  bool chunked_string_(uint8_t major, std::string &out) {
+    size_t total = 0;
+    if (this->measure_ != nullptr) {
+      if (!this->chunks_(major, nullptr, &total))
         return false;
+      this->account_string_(total);
+      return true;
+    }
+    DecodeInfo sizes;
+    Decoder scan(this->data_, this->len_, this->pos_, &sizes);
+    if (!scan.chunks_(major, nullptr, &total))
+      return false;
+    out.reserve(total);
+    return this->chunks_(major, &out, &total);
+  }
+
+  bool definite_container_(Value &out, int depth, size_t count) {
+    if (this->measure_ != nullptr) {
+      this->account_block_(count * sizeof(Value));
+      Value scratch;  // stays empty: nothing is stored while measuring
+      for (size_t i = 0; i < count; i++) {
+        if (!this->item(scratch, depth + 1))
+          return false;
+      }
+      return true;
+    }
+    out.items.resize(count);
+    for (auto &child : out.items) {
+      if (!this->item(child, depth + 1))
+        return false;
+    }
+    return true;
+  }
+
+  /// Walks the items of an indefinite container up to (not including) its break.
+  bool count_items_(int depth, size_t stride, size_t *count) {
+    Value scratch;
+    *count = 0;
+    while (true) {
+      if (this->pos_ >= this->len_)
+        return false;
+      if (this->data_[this->pos_] == 0xFF)
+        return (*count % stride) == 0;
+      if (*count >= MAX_ITEMS * stride || !this->item(scratch, depth + 1))
+        return false;
+      (*count)++;
     }
   }
 
   bool indefinite_container_(Value &out, int depth, size_t stride) {
-    while (true) {
-      if (this->pos_ >= this->len_)
+    size_t count = 0;
+    if (this->measure_ != nullptr) {
+      if (!this->count_items_(depth, stride, &count))
         return false;
-      if (this->data_[this->pos_] == 0xFF) {
-        this->pos_++;
-        return (out.items.size() % stride) == 0;
-      }
-      if (out.items.size() >= MAX_ITEMS * stride)
+      this->pos_++;  // break
+      this->account_block_(count * sizeof(Value));
+      return true;
+    }
+    {
+      DecodeInfo sizes;
+      Decoder scan(this->data_, this->len_, this->pos_, &sizes);
+      if (!scan.count_items_(depth, stride, &count))
         return false;
+    }
+    out.items.reserve(count);
+    for (size_t i = 0; i < count; i++) {
       out.items.emplace_back();
       if (!this->item(out.items.back(), depth + 1))
         return false;
     }
+    if (this->pos_ >= this->len_ || this->data_[this->pos_] != 0xFF)
+      return false;
+    this->pos_++;
+    return true;
   }
 
   static double half_to_double(uint16_t h) {
@@ -377,16 +448,42 @@ class Decoder {
 
   const uint8_t *data_;
   size_t len_;
-  size_t pos_{0};
+  size_t pos_;
+  DecodeInfo *measure_;
 };
 
 }  // namespace
 
-bool decode(const uint8_t *data, size_t len, Value &out, size_t *consumed) {
-  out = Value();
+bool measure(const uint8_t *data, size_t len, DecodeInfo *info, size_t *consumed) {
+  DecodeInfo local;
+  DecodeInfo *m = info != nullptr ? info : &local;
+  *m = DecodeInfo();
   if (data == nullptr || len == 0)
     return false;
-  Decoder dec(data, len);
+  Decoder dec(data, len, 0, m);
+  Value scratch;
+  if (!dec.item(scratch, 0))
+    return false;
+  if (consumed != nullptr)
+    *consumed = dec.pos();
+  return true;
+}
+
+bool decode(const uint8_t *data, size_t len, Value &out, size_t *consumed, const DecodeLimits *limits,
+            DecodeInfo *info) {
+  out = Value();
+  DecodeInfo local;
+  DecodeInfo *m = info != nullptr ? info : &local;
+  // 1. validate and measure without allocating: malformed or truncated data costs nothing
+  if (!measure(data, len, m, nullptr))
+    return false;
+  // 2. refuse what would not fit in memory (an allocation failure aborts the firmware)
+  if (limits != nullptr && (m->heap > limits->max_heap || m->largest_block > limits->max_block)) {
+    m->too_large = true;
+    return false;
+  }
+  // 3. build the tree
+  Decoder dec(data, len, 0, nullptr);
   if (!dec.item(out, 0)) {
     out = Value();
     return false;

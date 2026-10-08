@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <new>
 #include <random>
 #include <string>
 #include <vector>
@@ -15,6 +16,18 @@
 #include "../components/truma_inetx/frame.h"
 
 using namespace esphome::truma_inetx;
+
+// Counts heap allocations, to check that the decoder allocates nothing for bad input
+// and reserves containers exactly.
+static size_t g_allocations = 0;
+void *operator new(std::size_t n) {
+  g_allocations++;
+  if (void *p = std::malloc(n != 0 ? n : 1))
+    return p;
+  throw std::bad_alloc();
+}
+void operator delete(void *p) noexcept { std::free(p); }
+void operator delete(void *p, std::size_t) noexcept { std::free(p); }
 
 static int failures = 0;
 static int checks = 0;
@@ -184,6 +197,71 @@ static void test_decoder_errors() {
   CHECK(!cbor::decode(nullptr, 0, v));
 }
 
+static void test_decoder_memory() {
+  cbor::Value v;
+  cbor::DecodeInfo info;
+
+  // Unterminated nested indefinite arrays (the kind of input that exhausted the ESP32 heap):
+  // rejected without a single allocation.
+  std::vector<uint8_t> nested(8, 0x9f);
+  nested.insert(nested.end(), 1000, 0x01);
+  size_t before = g_allocations;
+  CHECK(!cbor::decode(nested.data(), nested.size(), v, nullptr, nullptr, &info));
+  CHECK(g_allocations == before);
+  CHECK(!v.valid());
+
+  // Same input, terminated: valid, one exact allocation per container.
+  nested.insert(nested.end(), 8, 0xff);
+  before = g_allocations;
+  CHECK(cbor::decode(nested.data(), nested.size(), v, nullptr, nullptr, &info));
+  CHECK(g_allocations - before == 8);
+  CHECK(info.nodes == 1008);
+  CHECK(info.largest_block == 1000 * sizeof(cbor::Value));
+  const cbor::Value *inner = &v;
+  for (int i = 0; i < 7; i++)
+    inner = &inner->items[0];
+  CHECK(inner->is_array() && inner->items.size() == 1000 && inner->items[999].as_int() == 1);
+  CHECK(inner->items.capacity() == 1000);
+
+  // Over the memory limits: refused before allocating.
+  cbor::DecodeLimits small{4096, 100000};
+  before = g_allocations;
+  CHECK(!cbor::decode(nested.data(), nested.size(), v, nullptr, &small, &info));
+  CHECK(info.too_large);
+  CHECK(g_allocations == before);
+  cbor::DecodeLimits small_block{1000000, 1024};
+  CHECK(!cbor::decode(nested.data(), nested.size(), v, nullptr, &small_block, &info));
+  CHECK(info.too_large);
+  cbor::DecodeLimits enough{1000000, 1000000};
+  CHECK(cbor::decode(nested.data(), nested.size(), v, nullptr, &enough, &info));
+  CHECK(!info.too_large);
+
+  // Too many items in one container.
+  std::vector<uint8_t> many(1, 0x9f);
+  many.insert(many.end(), 1025, 0x01);
+  many.push_back(0xff);
+  CHECK(!cbor::decode(many.data(), many.size(), v));
+
+  // Indefinite map: one exact allocation.
+  auto map = unhex("bf616101616202ff");
+  before = g_allocations;
+  CHECK(cbor::decode(map.data(), map.size(), v));
+  CHECK(g_allocations - before == 1);
+  CHECK(v.get("a")->as_int() == 1 && v.get("b")->as_int() == 2);
+
+  // Chunked text longer than the small-string buffer: reserved once.
+  auto chunked = unhex("7f70" "30313233343536373839616263646566" "627879" "ff");
+  before = g_allocations;
+  CHECK(cbor::decode(chunked.data(), chunked.size(), v));
+  CHECK(g_allocations - before == 1);
+  CHECK(v.is_text() && v.str == "0123456789abcdefxy");
+
+  // measure() reports the bytes of the item only.
+  auto trailing = unhex("8301020300");
+  size_t used = 0;
+  CHECK(cbor::measure(trailing.data(), trailing.size(), &info, &used) && used == 4 && info.nodes == 4);
+}
+
 static void test_encoder_roundtrip() {
   std::vector<uint8_t> buf;
   cbor::Encoder enc(buf);
@@ -247,6 +325,7 @@ int main() {
   test_parse_frames();
   test_decoder_types();
   test_decoder_errors();
+  test_decoder_memory();
   test_encoder_roundtrip();
   test_fuzz();
   std::printf("%d checks, %d failures\n", checks, failures);

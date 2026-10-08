@@ -21,7 +21,7 @@ size_t expected_frame_length(const uint8_t *data, size_t len) {
   return 7 + static_cast<size_t>(read_u16(data + 4));
 }
 
-bool parse_frame(const uint8_t *data, size_t len, Frame &out) {
+bool parse_frame(const uint8_t *data, size_t len, Frame &out, const cbor::DecodeLimits *limits) {
   out = Frame();
   if (data == nullptr || len < V3_HEADER_SIZE)
     return false;
@@ -40,7 +40,7 @@ bool parse_frame(const uint8_t *data, size_t len, Frame &out) {
   if (len > V3_MIN_FRAME) {
     out.payload.assign(data + V3_MIN_FRAME, data + len);
     size_t consumed = 0;
-    if (!cbor::decode(out.payload.data(), out.payload.size(), out.cbor, &consumed))
+    if (!cbor::decode(out.payload.data(), out.payload.size(), out.cbor, &consumed, limits, &out.cbor_info))
       out.cbor = cbor::Value();
   }
   return true;

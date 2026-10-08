@@ -169,9 +169,10 @@ CONFIG_SCHEMA = (
             # Re-read every parameter periodically, in case the device does not push changes
             # made with its remote ("never" to disable).
             cv.Optional(CONF_POLL_INTERVAL, default="60s"): cv.update_interval,
-            # The ESP32 transmits at +3 dBm by default: a roof unit may not hear its connection
-            # requests (HCI error 0x3E). 9 dBm is the maximum; applies to the whole ESP32 BLE radio.
-            cv.Optional(CONF_TX_POWER, default=9): validate_tx_power,
+            # Bluetooth TX power of the ESP32 in dBm (whole BLE radio, proxy included). Not set:
+            # ESP-IDF default (+3 dBm). Raise it if the unit does not answer connection requests
+            # (HCI error 0x3E); 9 dBm is the maximum.
+            cv.Optional(CONF_TX_POWER): validate_tx_power,
         }
     )
     .extend(ble_client.BLE_CLIENT_SCHEMA)

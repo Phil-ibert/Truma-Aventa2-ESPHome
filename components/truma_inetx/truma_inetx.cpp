@@ -8,6 +8,7 @@
 
 #include <esp_bt.h>
 #include <esp_gap_ble_api.h>
+#include <esp_heap_caps.h>
 #include <esp_gattc_api.h>
 
 #include <algorithm>
@@ -35,6 +36,17 @@ static const uint32_t PAIRING_SCAN_MS = 8000;
 static const size_t MAX_LOGGED_ADVERTISERS = 32;
 static const uint32_t ADDRESS_PREF_MAGIC = 0x54524D41;  // "TRMA"
 static const int HCI_ERR_CONN_FAILED_TO_ESTABLISH = 0x3E;
+static const size_t HEAP_RESERVE = 16384;  // left free for Wi-Fi, Bluetooth and the API when decoding
+
+/// Memory a received message may use once decoded: an allocation failure would abort the firmware.
+static cbor::DecodeLimits decode_limits() {
+  const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  cbor::DecodeLimits limits;
+  limits.max_heap = free_heap > HEAP_RESERVE ? free_heap - HEAP_RESERVE : 0;
+  limits.max_block = largest / 4 * 3;
+  return limits;
+}
 
 static void format_address(uint64_t address, char *out) {
   snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X", (unsigned) ((address >> 40) & 0xFF),
@@ -659,7 +671,7 @@ void TrumaInetX::on_connection_failed_(int status) {
              "%u connection attempts to %s failed in %u s (RSSI %d dBm): the device did not answer the "
              "connection request (HCI 0x3E). This is a radio problem (distance, obstacles, Wi-Fi sharing the "
              "ESP32 radio), not a pairing problem: the ESP32 keeps retrying. If this happens often, bring the "
-             "ESP32 closer to the unit.",
+             "ESP32 closer to the unit or raise tx_power.",
              (unsigned) this->connect_failures_, this->parent()->address_str(), seconds, this->last_rssi_);
   } else {
     ESP_LOGW(TAG, "%u connection attempts to %s failed in %u s (RSSI %d dBm, GATT status %d, HCI reason 0x%02X)",
@@ -946,9 +958,22 @@ void TrumaInetX::process_rx_frame_(const uint8_t *data, size_t len) {
   this->queue_gatt_write_(this->cmd_handle_, {TP_DATA_ACK, 0x01}, true);
   this->log_frame_("RX", data, len);
   Frame frame;
-  if (!parse_frame(data, len, frame)) {
+  const cbor::DecodeLimits limits = decode_limits();
+  if (!parse_frame(data, len, frame, &limits)) {
     ESP_LOGW(TAG, "Short frame ignored: %s", hex_dump(data, len).c_str());
     return;
+  }
+  if (frame.cbor_info.too_large) {
+    ESP_LOGW(TAG,
+             "Message from 0x%04X ignored: decoding it needs about %u bytes of memory (%u values, largest block "
+             "%u), only %u available (largest free block %u)",
+             frame.src, (unsigned) frame.cbor_info.heap, (unsigned) frame.cbor_info.nodes,
+             (unsigned) frame.cbor_info.largest_block, (unsigned) limits.max_heap, (unsigned) limits.max_block);
+    return;
+  }
+  if (!frame.payload.empty() && !frame.cbor.valid()) {
+    ESP_LOGD(TAG, "Message from 0x%04X is not valid CBOR (%u bytes): %s", frame.src,
+             (unsigned) frame.payload.size(), hex_dump(frame.payload.data(), frame.payload.size(), 32).c_str());
   }
   if (frame.seg_flags & SEG_IS_SEGMENTED) {
     ESP_LOGW(TAG, "Segmented frame received (flags 0x%02X, segment %u/%u) - not supported yet, please report: %s",
@@ -961,7 +986,8 @@ void TrumaInetX::log_frame_(const char *direction, const uint8_t *data, size_t l
   if (!this->log_frames_)
     return;
   Frame frame;
-  if (!parse_frame(data, len, frame)) {
+  const cbor::DecodeLimits limits = decode_limits();
+  if (!parse_frame(data, len, frame, &limits)) {
     ESP_LOGD(TAG, "%s %s", direction, hex_dump(data, len).c_str());
     return;
   }

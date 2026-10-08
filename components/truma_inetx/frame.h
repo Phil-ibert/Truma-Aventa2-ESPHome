@@ -95,13 +95,15 @@ struct Frame {
   uint8_t corr_id{0};
   std::vector<uint8_t> payload;  // CBOR bytes (after sub type + correlation id)
   cbor::Value cbor;              // decoded payload (type NONE if absent / not CBOR)
+  cbor::DecodeInfo cbor_info;    // size of the payload, or too_large if it was refused
 };
 
 /// Total frame length announced by a V3 header (7 + packet_size). 0 if fewer than 6 bytes are available.
 size_t expected_frame_length(const uint8_t *data, size_t len);
 
-/// Parse a V3 frame. Returns false if too short to contain a header.
-bool parse_frame(const uint8_t *data, size_t len, Frame &out);
+/// Parse a V3 frame. Returns false if too short to contain a header. The CBOR payload is only
+/// decoded if it is valid and fits in `limits` (see cbor::decode).
+bool parse_frame(const uint8_t *data, size_t len, Frame &out, const cbor::DecodeLimits *limits = nullptr);
 
 /// Build a non-segmented V3 frame.
 std::vector<uint8_t> build_frame(uint16_t dest, uint16_t src, uint8_t control, uint8_t sub_type, uint8_t corr_id,

@@ -285,7 +285,7 @@ La procédure de capture avec un sniffer nRF et Wireshark est dans
 | `log_advertisements` | `true` | journalise les appareils Truma entendus |
 | `log_frames` | `false` | journalise chaque trame décodée |
 | `frame_delay` | `100ms` | délai minimal entre deux messages |
-| `tx_power` | `9` | puissance d'émission Bluetooth de l'ESP32 en dBm : -12, -9, -6, -3, 0, 3, 6 ou 9 (maximum). ESP-IDF émet à +3 dBm par défaut, ce qui peut être juste pour une clim sur le toit. S'applique à toute la radio Bluetooth de l'ESP32 (proxy compris). `default` pour ne pas y toucher |
+| `tx_power` | non modifiée (+3 dBm, valeur d'ESP-IDF) | puissance d'émission Bluetooth de l'ESP32 en dBm : -12, -9, -6, -3, 0, 3, 6 ou 9 (maximum). À augmenter si la clim ne répond pas aux demandes de connexion (`reason 0x3e`). S'applique à toute la radio Bluetooth de l'ESP32 (proxy compris) |
 | `poll_interval` | `60s` | relit périodiquement tous les paramètres (filet de sécurité si la clim ne signale pas d'elle-même un changement fait à la télécommande). `never` pour désactiver |
 
 ### Plateformes d'entités
@@ -354,7 +354,8 @@ Toutes acceptent `truma_inetx_id` et les options standard d'ESPHome. Sauf `clima
 | `Truma iNet X characteristics not found` | Le composant cherche `FC314001`–`FC314003` dans tous les services. Si ce message apparaît, la disposition GATT (imprimée juste en dessous) est inattendue : ouvrez une issue avec ce log. |
 | `No registration response` | Protocole différent sur l'Aventa : activez `log_frames` et faites une capture (voir [docs/capture-ble.md](docs/capture-ble.md)). |
 | Un mode ne s'applique pas | Étalonnez les valeurs avec la télécommande (voir plus haut). |
-| Reconnexion lente : `Connection open error, status=133` avec `reason 0x3e`, puis `N connection attempts ... failed` | La clim n'a pas répondu à la demande de connexion. C'est un problème radio, pas un problème d'appairage : l'ESP32 réessaie tout seul et finit par se connecter (`Connected ... after N failed attempts`). Comparez le RSSI affiché à celui de l'appairage. Rapprochez l'ESP32 de la clim ou dégagez son antenne, et gardez `tx_power: 9`. Un Wi-Fi faible occupe aussi davantage la radio que l'ESP32 partage avec le Bluetooth. |
+| `Message from 0x.... ignored: decoding it needs about N bytes of memory` | Un message reçu demanderait plus de mémoire que l'ESP32 n'en a de libre : il est ignoré plutôt que de faire planter le firmware. Si cela se répète, envoyez ce log (et, si possible, la même séquence avec `log_frames: true`). |
+| Reconnexion lente : `Connection open error, status=133` avec `reason 0x3e`, puis `N connection attempts ... failed` | La clim n'a pas répondu à la demande de connexion. C'est un problème radio, pas un problème d'appairage : l'ESP32 réessaie tout seul et finit par se connecter (`Connected ... after N failed attempts`). Comparez le RSSI affiché à celui de l'appairage. Rapprochez l'ESP32 de la clim ou dégagez son antenne, ou augmentez `tx_power` (6, voire 9). Un Wi-Fi faible occupe aussi davantage la radio que l'ESP32 partage avec le Bluetooth. |
 
 ## Développement
 

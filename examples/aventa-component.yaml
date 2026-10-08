@@ -36,7 +36,7 @@ truma_inetx:
     time_id: ha_time
     # pin: 123456          # si l'Aventa demande un code
     # log_frames: true     # trames décodées dans les logs (mise au point)
-    # tx_power: 9          # puissance d'émission Bluetooth de l'ESP32 en dBm (9 = maximum, défaut)
+    # tx_power: 6          # puissance Bluetooth de l'ESP32 en dBm (défaut ESP-IDF : 3, maximum : 9)
 
 climate:
   - platform: truma_inetx
