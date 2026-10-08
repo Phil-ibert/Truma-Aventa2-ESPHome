@@ -594,10 +594,45 @@ bool TrumaInetX::parse_device(const espbt::ESPBTDevice &device) {
   return false;  // never consume: the BLE client and other listeners need it too
 }
 
+static bool tx_power_level(int dbm, esp_power_level_t *level) {
+  switch (dbm) {
+    case -12:
+      *level = ESP_PWR_LVL_N12;
+      return true;
+    case -9:
+      *level = ESP_PWR_LVL_N9;
+      return true;
+    case -6:
+      *level = ESP_PWR_LVL_N6;
+      return true;
+    case -3:
+      *level = ESP_PWR_LVL_N3;
+      return true;
+    case 0:
+      *level = ESP_PWR_LVL_N0;
+      return true;
+    case 3:
+      *level = ESP_PWR_LVL_P3;
+      return true;
+    case 6:
+      *level = ESP_PWR_LVL_P6;
+      return true;
+    case 9:
+      *level = ESP_PWR_LVL_P9;
+      return true;
+    default:
+      return false;
+  }
+}
+
 void TrumaInetX::apply_tx_power_() {
   // DEFAULT covers every power type that was never set (connections, scanning, connection
   // requests); SCAN is set explicitly too in case something set it before.
-  const auto level = static_cast<esp_power_level_t>(this->tx_power_level_);
+  esp_power_level_t level;
+  if (!tx_power_level(this->tx_power_dbm_, &level)) {
+    ESP_LOGW(TAG, "Unsupported Bluetooth TX power: %d dBm", this->tx_power_dbm_);
+    return;
+  }
   esp_err_t err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, level);
   if (err == ESP_OK)
     err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, level);

@@ -89,17 +89,8 @@ DEFAULT_TOPICS = [
 # are queried automatically, so this list only speeds up the first connection.
 DEFAULT_DISCOVERY_ADDRESSES = [0x0101, 0x0801]
 
-esp_power_level_t = cg.global_ns.enum("esp_power_level_t")
-TX_POWER_LEVELS = {
-    -12: esp_power_level_t.ESP_PWR_LVL_N12,
-    -9: esp_power_level_t.ESP_PWR_LVL_N9,
-    -6: esp_power_level_t.ESP_PWR_LVL_N6,
-    -3: esp_power_level_t.ESP_PWR_LVL_N3,
-    0: esp_power_level_t.ESP_PWR_LVL_N0,
-    3: esp_power_level_t.ESP_PWR_LVL_P3,
-    6: esp_power_level_t.ESP_PWR_LVL_P6,
-    9: esp_power_level_t.ESP_PWR_LVL_P9,
-}
+# dBm values accepted by every ESP32 variant (converted to esp_power_level_t in C++)
+TX_POWER_LEVELS = [-12, -9, -6, -3, 0, 3, 6, 9]
 
 
 def validate_tx_power(value):
@@ -117,7 +108,7 @@ def validate_tx_power(value):
     value = cv.int_(value)
     if value not in TX_POWER_LEVELS:
         raise cv.Invalid(
-            f"tx_power must be one of {', '.join(str(v) for v in sorted(TX_POWER_LEVELS))} dBm"
+            f"tx_power must be one of {', '.join(str(v) for v in TX_POWER_LEVELS)} dBm"
         )
     return value
 
@@ -246,4 +237,4 @@ async def to_code(config):
     if CONF_DEVICE_NAME in config:
         cg.add(var.set_device_name(config[CONF_DEVICE_NAME]))
     if (tx_power := config.get(CONF_TX_POWER)) is not None:
-        cg.add(var.set_tx_power(TX_POWER_LEVELS[tx_power], tx_power))
+        cg.add(var.set_tx_power(tx_power))

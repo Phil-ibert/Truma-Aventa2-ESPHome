@@ -89,8 +89,7 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   void set_remember_address(bool remember) { this->remember_address_ = remember; }
   void set_log_advertisements(bool log) { this->log_advertisements_ = log; }
   /// Bluetooth transmit power of the ESP32 (scan/connection requests and links), in dBm.
-  void set_tx_power(int level, int dbm) {  // level: esp_power_level_t
-    this->tx_power_level_ = level;
+  void set_tx_power(int dbm) {
     this->tx_power_dbm_ = dbm;
     this->has_tx_power_ = true;
   }
@@ -218,7 +217,6 @@ class TrumaInetX : public Component, public ble_client::BLEClientNode, public es
   bool remember_address_{true};
   bool log_advertisements_{true};
   bool has_tx_power_{false};
-  int tx_power_level_{0};
   int tx_power_dbm_{0};
 #ifdef USE_TIME
   time::RealTimeClock *time_{nullptr};
