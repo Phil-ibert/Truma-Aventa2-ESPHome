@@ -1,0 +1,1 @@
+# Truma-Aventa2-ESPHome
